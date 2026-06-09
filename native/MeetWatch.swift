@@ -52,7 +52,7 @@ func r3(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var windowID: CGWindowID = 0
-    private let queue = DispatchQueue(label: "muesli.watch")
+    private let queue = DispatchQueue(label: "clawd-scribe.watch")
     private let GRID_W = 64
     private let GRID_H = 36
 

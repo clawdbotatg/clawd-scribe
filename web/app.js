@@ -1,4 +1,4 @@
-// muesli web UI — vanilla JS, talks to the local daemon over REST + WebSocket.
+// clawd-scribe web UI — vanilla JS, talks to the local daemon over REST + WebSocket.
 const $ = (id) => document.getElementById(id);
 
 let state = {

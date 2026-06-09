@@ -1,15 +1,15 @@
-# 🥣 muesli
+# ✍️ clawd-scribe
 
 **Local, open-source meeting notes.** Like Granola, but nothing ever leaves your machine.
 
 ![status](https://img.shields.io/badge/status-early%20alpha-orange) ![platform](https://img.shields.io/badge/platform-macOS%2015%2B-lightgrey) ![license](https://img.shields.io/badge/license-MIT-green)
 
-muesli records your Google Meet / Zoom / whatever calls **without a bot joining the meeting** — it captures your Mac's system audio (everyone else) plus your microphone (you), transcribes locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), and turns the transcript + your rough notes into clean meeting notes with a local LLM via [Ollama](https://ollama.com).
+clawd-scribe records your Google Meet / Zoom / whatever calls **without a bot joining the meeting** — it captures your Mac's system audio (everyone else) plus your microphone (you), transcribes locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), and turns the transcript + your rough notes into clean meeting notes with a local LLM via [Ollama](https://ollama.com).
 
 - 🎙 **No meeting bot** — records system audio via ScreenCaptureKit, invisible to other participants*
 - 🔒 **100% local** — audio, transcripts, and summaries never touch a cloud
 - 👥 **Speaker identification** — your mic and the meeting audio are captured as separate channels, so *you* are always attributed correctly; remote voices are clustered into Speaker 1/2/3 with local diarization ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + pyannote segmentation + NeMo TitaNet embeddings) and you name them with one click
-- 👁 **Meeting-window vision** — while recording, muesli watches your Meet/Zoom window (ScreenCaptureKit + Apple's local Vision OCR, ~1fps): it reads participant names off the tiles and tracks the active-speaker highlight border, then fuses that timeline with the voice clusters to **auto-name speakers** — no clicking required when it's confident
+- 👁 **Meeting-window vision** — while recording, clawd-scribe watches your Meet/Zoom window (ScreenCaptureKit + Apple's local Vision OCR, ~1fps): it reads participant names off the tiles and tracks the active-speaker highlight border, then fuses that timeline with the voice clusters to **auto-name speakers** — no clicking required when it's confident
 - ✍️ **Granola-style notes** — type rough notes during the call; the LLM weaves them together with the transcript, attributing action items to the right people
 - 🔇 **Echo gate** — if you're on laptop speakers, mic chunks that are just the meeting audio leaking back in are detected by envelope cross-correlation and dropped
 - 📂 **Plain files** — every meeting is a folder of markdown + JSON + WAV you own
@@ -44,7 +44,7 @@ tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 && rm sherpa-onnx-pyannote
 curl -sL -O https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
 cd ../..
 
-# 5. build + run muesli
+# 5. build + run clawd-scribe
 npm install
 npm run build:native
 npm start
@@ -126,7 +126,7 @@ The design goal is **CROPS** — censorship-resistant, open source, private, sec
 - **Your data is plain files.** Everything lives in `data/` — grep it, back it up, encrypt it, delete it. Nothing is hidden in a database or synced anywhere.
 - **Easy to audit.** ~2,400 lines total, two npm dependencies (`ws`, `sherpa-onnx-node`), no framework, no build step for the UI.
 
-External touchpoints are setup-time only: Homebrew, npm, and model downloads from Hugging Face / GitHub releases. After setup, muesli works fully offline.
+External touchpoints are setup-time only: Homebrew, npm, and model downloads from Hugging Face / GitHub releases. After setup, clawd-scribe works fully offline.
 
 Known soft spots (PRs welcome): the localhost API has no auth token, meetings are not encrypted at rest (use FileVault), and it's macOS-only.
 

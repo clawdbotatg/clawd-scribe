@@ -174,8 +174,8 @@ final class Capturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var sysLast: TimeInterval = 0
     private var micLast: TimeInterval = 0
 
-    private let sysQueue = DispatchQueue(label: "muesli.sys")
-    private let micQueue = DispatchQueue(label: "muesli.mic")
+    private let sysQueue = DispatchQueue(label: "clawd-scribe.sys")
+    private let micQueue = DispatchQueue(label: "clawd-scribe.mic")
     private var mixTimer: DispatchSourceTimer?
 
     private var sysCount = 0
@@ -281,7 +281,7 @@ final class Capturer: NSObject, SCStreamOutput, SCStreamDelegate {
     // If one source goes stale (muted device, denied permission), pass the
     // other through alone so the recording never deadlocks.
     private func startMixer() {
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "muesli.mix"))
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "clawd-scribe.mix"))
         timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
         timer.setEventHandler { [weak self] in self?.mixTick() }
         timer.resume()

@@ -1,4 +1,4 @@
-// muesli daemon — HTTP API + WebSocket + static web UI, all on localhost.
+// clawd-scribe daemon — HTTP API + WebSocket + static web UI, all on localhost.
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -299,7 +299,7 @@ process.on("SIGINT", async () => {
 
 store.ensureDirs();
 server.listen(config.port, "127.0.0.1", () => {
-  console.log(`muesli listening on http://localhost:${config.port}`);
+  console.log(`clawd-scribe listening on http://localhost:${config.port}`);
   console.log(`whisper model: ${config.whisperModel}`);
   console.log(`llm: ${config.llm.model} @ ${config.llm.url}`);
 });

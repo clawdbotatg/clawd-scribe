@@ -1,5 +1,5 @@
 {
-  "name": "muesli",
+  "name": "clawd-scribe",
   "version": "0.1.0",
   "description": "Local, open-source meeting notes — system audio + mic capture, whisper.cpp transcription, local LLM summaries. No bots, no cloud.",
   "license": "MIT",
