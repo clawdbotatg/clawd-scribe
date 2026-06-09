@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>muesli</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <div id="brand">
+      <span class="logo">🥣</span> muesli
+      <span class="tagline">local meeting notes</span>
+    </div>
+    <button id="recordBtn" class="record">● Record meeting</button>
+    <div id="recState" class="hidden">
+      <div class="rec-row">
+        <span class="rec-dot"></span>
+        <span id="recTimer">0:00</span>
+        <div id="levelMeter"><div id="levelBar"></div></div>
+      </div>
+      <div id="watchBadge" class="hidden"></div>
+      <button id="stopBtn">■ Stop</button>
+    </div>
+    <div id="meetings"></div>
+  </aside>
+
+  <main id="main">
+    <div id="empty" class="empty">
+      <div class="logo-big">🥣</div>
+      <p>Hit <b>Record</b> when your meeting starts.<br/>
+      muesli captures system audio + your mic locally,<br/>
+      transcribes with whisper.cpp, and writes notes with a local LLM.<br/>
+      Nothing ever leaves this machine.</p>
+    </div>
+
+    <div id="meeting" class="hidden">
+      <header>
+        <input id="title" spellcheck="false" />
+        <div id="meetingMeta"></div>
+      </header>
+
+      <div id="columns">
+        <section class="col">
+          <div class="col-head">
+            <h2>Transcript</h2>
+            <span id="liveBadge" class="badge hidden">live</span>
+            <button id="diarizeBtn" title="Cluster remote voices into speakers (local)">👥 Identify speakers</button>
+          </div>
+          <div id="speakers"></div>
+          <div id="transcript"></div>
+        </section>
+
+        <section class="col">
+          <div class="col-head">
+            <h2>My notes</h2>
+            <span id="saveState" class="badge"></span>
+          </div>
+          <textarea id="notes" placeholder="Type rough notes during the meeting — they'll steer the generated summary…"></textarea>
+
+          <div class="col-head">
+            <h2>Generated notes</h2>
+            <button id="generateBtn">✨ Generate</button>
+          </div>
+          <div id="summary" class="markdown"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" class="hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

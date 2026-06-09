@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Meet – muesli vision test</title>
+<style>
+  body { margin:0; background:#202124; height:100vh; display:flex; align-items:center;
+         justify-content:center; gap:16px; font-family:'Google Sans',Roboto,sans-serif; }
+  .tile { position:relative; width:42vw; height:60vh; background:#3c4043; border-radius:12px;
+          border:4px solid transparent; display:flex; align-items:center; justify-content:center; }
+  .tile.active { border-color:#1a73e8; }
+  .avatar { width:120px; height:120px; border-radius:50%; display:flex; align-items:center;
+            justify-content:center; font-size:48px; color:#fff; }
+  .t1 .avatar { background:#7b1fa2; }
+  .t2 .avatar { background:#00796b; }
+  .name { position:absolute; left:14px; bottom:12px; color:#fff; font-size:18px;
+          font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,.8); }
+</style>
+</head>
+<body>
+  <div class="tile t1" id="t1"><div class="avatar">S</div><div class="name">Samantha Rivera</div></div>
+  <div class="tile t2" id="t2"><div class="avatar">D</div><div class="name">Daniel Okafor</div></div>
+<script>
+  // Schedule (seconds from load when #go): who has the active border.
+  // Mirrors the `say` script used in the automated test.
+  const schedule = [
+    [2, 14, "t1"],
+    [15, 26, "t2"],
+    [27, 34, "t1"],
+  ];
+  function setActive(id) {
+    for (const t of ["t1", "t2"]) {
+      document.getElementById(t).classList.toggle("active", t === id);
+    }
+  }
+  window.setActive = setActive;
+  if (location.hash === "#go") {
+    const t0 = Date.now();
+    setInterval(() => {
+      const el = (Date.now() - t0) / 1000;
+      const hit = schedule.find(([a, b]) => el >= a && el < b);
+      setActive(hit ? hit[2] : null);
+    }, 250);
+  }
+</script>
+</body>
+</html>

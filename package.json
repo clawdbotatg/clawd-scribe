@@ -1,0 +1,14 @@
+{
+  "name": "muesli",
+  "version": "0.1.0",
+  "description": "Local, open-source meeting notes — system audio + mic capture, whisper.cpp transcription, local LLM summaries. No bots, no cloud.",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server/index.js",
+    "build:native": "swiftc -O -o native/audiocap native/AudioCapture.swift && swiftc -O -o native/meetwatch native/MeetWatch.swift"
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "^1.13.2",
+    "ws": "^8.18.0"
+  }
+}

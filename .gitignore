@@ -1,0 +1,5 @@
+node_modules/
+data/
+native/audiocap
+native/meetwatch
+.DS_Store
