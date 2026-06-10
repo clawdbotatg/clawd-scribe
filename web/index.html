@@ -46,8 +46,12 @@
           <div class="col-head">
             <h2>Transcript</h2>
             <span id="liveBadge" class="badge hidden">live</span>
-            <button id="diarizeBtn" title="Cluster remote voices into speakers (local)">👥 Identify speakers</button>
+            <span class="head-btns">
+              <button id="copyBtn" title="Copy the whole conversation as markdown — paste it into Claude">⧉ Copy</button>
+              <button id="diarizeBtn" title="Cluster remote voices into speakers (local)">👥 Identify speakers</button>
+            </span>
           </div>
+          <div id="visionInfo" class="hidden"></div>
           <div id="speakers"></div>
           <div id="transcript"></div>
         </section>

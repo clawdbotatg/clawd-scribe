@@ -12,9 +12,11 @@
 //   {"event":"lost"}
 // All coordinates are normalized [0,1] with top-left origin.
 
+import CoreImage
 import CoreMedia
 import CoreVideo
 import Foundation
+import ImageIO
 import ScreenCaptureKit
 import Vision
 
@@ -53,6 +55,8 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var windowID: CGWindowID = 0
     private let queue = DispatchQueue(label: "clawd-scribe.watch")
+    private let ciContext = CIContext(options: nil)
+    private var frameCount = 0
     private let GRID_W = 64
     private let GRID_H = 36
 
@@ -71,12 +75,26 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
                 emit(["event": "windows", "titles": titles])
             }
-            let candidates = (content?.windows ?? []).filter { w in
-                guard let title = w.title?.lowercased(), !title.isEmpty else { return false }
-                guard w.frame.width >= 320 && w.frame.height >= 240 else { return false }
-                return opts.patterns.contains { title.contains($0) }
+            // Score candidates instead of substring-matching titles: "meet" must
+            // match as a whole word ("Google Meet" yes, "meeting notes" no), and
+            // windows owned by a real meeting app outrank browser tabs.
+            let meetingApps = ["zoom.us", "microsoft teams", "webex", "cisco webex"]
+            func score(_ w: SCWindow) -> Int {
+                guard let title = w.title?.lowercased(), !title.isEmpty,
+                      w.frame.width >= 320, w.frame.height >= 240 else { return 0 }
+                let app = (w.owningApplication?.applicationName ?? "").lowercased()
+                var s = 0
+                if meetingApps.contains(where: { app.contains($0) }) { s += 4 }
+                for p in opts.patterns {
+                    let rx = "\\b" + NSRegularExpression.escapedPattern(for: p) + "\\b"
+                    if title.range(of: rx, options: .regularExpression) != nil { s += 2; break }
+                }
+                return s
             }
-            guard let win = candidates.max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+            let candidates = (content?.windows ?? []).map { ($0, score($0)) }.filter { $0.1 >= 2 }
+            guard let (win, _) = candidates.max(by: {
+                ($0.1, $0.0.frame.width * $0.0.frame.height) < ($1.1, $1.0.frame.width * $1.0.frame.height)
+            }) else {
                 self.rescanLater()
                 return
             }
@@ -138,10 +156,53 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func process(_ pb: CVPixelBuffer) {
+        frameCount += 1
         let rects = highlightRects(pb)
         let texts = ocr(pb)
-        if texts.isEmpty && rects.isEmpty { return }
-        emit(["event": "frame", "texts": texts, "rects": rects])
+        // face crops are heavier (JPEG over stdout) — sample every 5th frame
+        let faces = frameCount % 5 == 0 ? detectFaces(pb) : []
+        if texts.isEmpty && rects.isEmpty && faces.isEmpty { return }
+        var msg: [String: Any] = ["event": "frame", "texts": texts, "rects": rects]
+        if !faces.isEmpty { msg["faces"] = faces }
+        emit(msg)
+    }
+
+    // Detect faces and emit small JPEG crops so the daemon can pair each face
+    // with the participant name on the same tile. Crops stay on this machine.
+    private func detectFaces(_ pb: CVPixelBuffer) -> [[String: Any]] {
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: pb, options: [:])
+        guard (try? handler.perform([request])) != nil else { return [] }
+        let W = Double(CVPixelBufferGetWidth(pb))
+        let H = Double(CVPixelBufferGetHeight(pb))
+        let img = CIImage(cvPixelBuffer: pb)
+        var out: [[String: Any]] = []
+        for obs in (request.results ?? []).prefix(12) {
+            let bb = obs.boundingBox // normalized, bottom-left origin
+            let m = 0.45 // margin around the face
+            let crop = CGRect(
+                x: (bb.minX - bb.width * m) * W,
+                y: (bb.minY - bb.height * m) * H,
+                width: bb.width * (1 + 2 * m) * W,
+                height: bb.height * (1 + 2 * m) * H
+            ).intersection(CGRect(x: 0, y: 0, width: W, height: H))
+            guard crop.width >= 24, crop.height >= 24 else { continue }
+            var face = img.cropped(to: crop)
+            let scale = 96.0 / crop.height
+            if scale < 1 { face = face.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+            let q = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+            guard let jpg = ciContext.jpegRepresentation(
+                of: face, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [q: 0.7]
+            ) else { continue }
+            out.append([
+                "x": r3(bb.minX),
+                "y": r3(1 - bb.maxY), // top-left origin, like texts/rects
+                "w": r3(bb.width),
+                "h": r3(bb.height),
+                "jpg": jpg.base64EncodedString(),
+            ])
+        }
+        return out
     }
 
     // Find clusters of pixels matching the active-speaker highlight colors.

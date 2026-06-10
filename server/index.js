@@ -16,6 +16,7 @@ const WEB_DIR = path.join(__dirname, "..", "web");
 
 let recorder = null; // active Recorder or null
 let watcher = null; // active Watcher or null
+let watcherStatus = null; // last watcher status, so reloads can re-show the badge
 let activeMeeting = null;
 
 // --- WebSocket broadcast ---
@@ -55,6 +56,7 @@ function startRecording(title) {
     watcher = new Watcher(meeting, config, store, recorder.startTime);
     watcher.on("status", (s) => {
       console.error("[meetwatch]", s.watching ? `watching: ${s.title}` : "no meeting window");
+      watcherStatus = s;
       broadcast({ type: "watcher", ...s });
     });
     watcher.start();
@@ -78,6 +80,7 @@ async function stopRecording() {
       console.error("[meetwatch]", e.message);
     }
     watcher = null;
+    watcherStatus = null;
     broadcast({ type: "watcher", watching: false });
   }
   const duration = await rec.stop();
@@ -87,8 +90,12 @@ async function stopRecording() {
   meta.status = "done";
   store.saveMeta(meta);
   broadcast({ type: "meetingDone", meeting: meta });
-  if (config.diarization.auto && config.keepAudio && modelsAvailable(config)) {
-    runDiarize(meta.id).catch((e) => console.error("[diarize]", e.message));
+  if (config.diarization.auto && config.keepAudio) {
+    if (modelsAvailable(config)) {
+      runDiarize(meta.id).catch((e) => console.error("[diarize]", e.message));
+    } else {
+      console.error("[diarize] skipped — models not found at configured paths (see data/config.json)");
+    }
   }
   return meta;
 }
@@ -174,6 +181,7 @@ const MIME = {
   ".css": "text/css",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
   ".wav": "audio/wav",
 };
 
@@ -198,6 +206,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, {
           recording: !!recorder,
           meeting: activeMeeting,
+          watcher: watcherStatus,
           generating: [...generating],
           config: { llm: config.llm, whisperModel: config.whisperModel },
         });
@@ -224,6 +233,10 @@ const server = http.createServer(async (req, res) => {
         // GET /api/meetings/:id/audio
         if (req.method === "GET" && parts[3] === "audio") {
           return serveStatic(res, path.join(store.meetingDir(id), "audio.wav"));
+        }
+        // GET /api/meetings/:id/faces/<n>.jpg
+        if (req.method === "GET" && parts[3] === "faces" && /^\d+\.jpg$/.test(parts[4] || "")) {
+          return serveStatic(res, path.join(store.meetingDir(id), "faces", parts[4]));
         }
         // PUT /api/meetings/:id/notes  { notes }
         if (req.method === "PUT" && parts[3] === "notes") {
@@ -288,7 +301,12 @@ const server = http.createServer(async (req, res) => {
 wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (sock) => {
   sock.send(
-    JSON.stringify({ type: "status", recording: !!recorder, meeting: activeMeeting })
+    JSON.stringify({
+      type: "status",
+      recording: !!recorder,
+      meeting: activeMeeting,
+      watcher: watcherStatus,
+    })
   );
 });
 

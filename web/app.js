@@ -158,7 +158,10 @@ function renderSpeakers() {
     if (key === "them") continue; // unclustered remote audio gets no chip
     const chip = document.createElement("div");
     chip.className = "speaker-chip";
-    chip.innerHTML = `<span class="dot" style="background:${speakerColor(key)}"></span>`;
+    const face = key === "them" ? null : rosterFace(speakerName(key));
+    chip.innerHTML = face
+      ? `<img class="face" src="${face}" alt="" />`
+      : `<span class="dot" style="background:${speakerColor(key)}"></span>`;
     const input = document.createElement("input");
     input.value = speakerName(key);
     input.title = "Click to rename";
@@ -168,6 +171,7 @@ function renderSpeakers() {
       state.current.meta.speakers = speakers;
       await api("PUT", `meetings/${state.current.meta.id}/speakers`, { speakers });
       renderTranscript();
+      renderSpeakers(); // a rename can match a rostered face
     };
     chip.appendChild(input);
     const t = document.createElement("span");
@@ -182,6 +186,39 @@ function renderSummary() {
   $("summary").innerHTML = state.current.summary
     ? renderMd(state.current.summary)
     : '<p style="color:var(--dim)">No notes yet — record or type notes, then hit Generate.</p>';
+}
+
+function rosterFace(name) {
+  const v = state.current && state.current.vision;
+  const entry = v && (v.roster || []).find((r) => r.face && r.name === name);
+  return entry ? `/api/meetings/${state.current.meta.id}/${entry.face}` : null;
+}
+
+function renderVision() {
+  const el = $("visionInfo");
+  const v = state.current && state.current.vision;
+  el.classList.toggle("hidden", !v);
+  if (!v) return;
+  if (!v.windowTitle) {
+    el.textContent = "👁 no meeting window found — names weren't read";
+    return;
+  }
+  const roster = v.roster || [];
+  const hl = (v.speaking || []).length
+    ? `${v.speaking.length} active-speaker intervals`
+    : "no active-speaker highlights";
+  let html = `<div class="vision-line">👁 watched “${esc(v.windowTitle)}”${
+    v.windowApp ? ` (${esc(v.windowApp)})` : ""
+  } — ${roster.length ? `saw ${roster.length} participant${roster.length === 1 ? "" : "s"}` : "no participant names recognized"} · ${hl}</div>`;
+  if (roster.length) {
+    html += `<div class="vision-roster">` + roster.slice(0, 12).map((r) => {
+      const img = r.face
+        ? `<img src="/api/meetings/${state.current.meta.id}/${r.face}" alt="" />`
+        : `<span class="noface">👤</span>`;
+      return `<span class="vision-person">${img}${esc(r.name)}</span>`;
+    }).join("") + `</div>`;
+  }
+  el.innerHTML = html;
 }
 
 function showEmpty() {
@@ -204,6 +241,7 @@ async function openMeeting(id) {
   $("liveBadge").classList.toggle("hidden", meta.id !== state.recordingMeetingId);
   renderTranscript();
   renderSpeakers();
+  renderVision();
   renderSummary();
   renderMeetingList();
 }
@@ -225,6 +263,24 @@ $("recordBtn").onclick = async () => {
     await openMeeting(meeting.id);
   } catch (e) {
     toast(e.message);
+  }
+};
+
+$("copyBtn").onclick = async () => {
+  if (!state.current) return;
+  const m = state.current;
+  const lines = [`# ${m.meta.title}`, fmtDate(m.meta.startedAt), ""];
+  for (const s of m.transcript) {
+    const key = speakerKey(s);
+    lines.push(`[${fmtTime(s.t)}] ${key ? speakerName(key) : "?"}: ${s.text.trim()}`);
+  }
+  if (m.notes && m.notes.trim()) lines.push("", "## My notes", m.notes.trim());
+  if (m.summary && m.summary.trim()) lines.push("", "## Generated notes", m.summary.trim());
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    toast(`Copied ${m.transcript.length} segments — paste away`, true);
+  } catch (e) {
+    toast("Copy failed: " + e.message);
   }
 };
 
@@ -316,6 +372,7 @@ function handleWS(msg) {
         state.recStart = new Date(msg.meeting.startedAt).getTime();
       }
       updateRecUI();
+      if (msg.watcher) handleWS({ type: "watcher", ...msg.watcher });
       break;
     case "level":
       $("levelBar").style.width = Math.min(100, msg.rms * 350) + "%";
@@ -349,7 +406,9 @@ function handleWS(msg) {
       break;
     case "watcher":
       $("watchBadge").classList.toggle("hidden", !msg.watching);
-      if (msg.watching) $("watchBadge").textContent = "👁 " + (msg.title || "meeting window");
+      if (msg.watching)
+        $("watchBadge").textContent =
+          "👁 " + (msg.title || "meeting window") + (msg.app ? ` (${msg.app})` : "");
       break;
     case "diarizeError":
       $("diarizeBtn").disabled = false;

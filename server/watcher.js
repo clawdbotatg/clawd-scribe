@@ -25,8 +25,11 @@ const UI_WORDS = new Set([
 ]);
 
 function looksLikeName(s) {
-  const t = s.trim();
+  // OCR fragments often carry trailing punctuation ("tiles.") — strip it first.
+  const t = s.trim().replace(/[.,;:!?]+$/, "");
   if (t.length < 2 || t.length > 40) return false;
+  // display names on tiles are capitalized; all-lowercase text is UI/page copy
+  if (!/\p{Lu}/u.test(t)) return false;
   if (UI_WORDS.has(t.toLowerCase())) return false;
   // Meet/Zoom display names can include parens, digits, dots, @ — e.g.
   // "Coltron (Coltron.eth)" — but never slashes, pipes, or long word runs.
@@ -57,6 +60,7 @@ class Watcher extends EventEmitter {
     this.helper = null;
     this.roster = new Map(); // name -> frame count
     this.samples = []; // {t (sec rel), name}
+    this.faces = new Map(); // name -> {area, jpg (Buffer)} — best crop so far
     this.windowTitle = null;
     this.lineBuf = "";
   }
@@ -87,7 +91,8 @@ class Watcher extends EventEmitter {
   onEvent(msg) {
     if (msg.event === "watching") {
       this.windowTitle = msg.title;
-      this.emit("status", { watching: true, title: msg.title });
+      this.windowApp = msg.app || null;
+      this.emit("status", { watching: true, title: msg.title, app: msg.app });
     } else if (msg.event === "lost") {
       this.emit("status", { watching: false });
     } else if (msg.event === "frame") {
@@ -111,6 +116,30 @@ class Watcher extends EventEmitter {
       }
     }
     if (best) this.samples.push({ t, name: best.name });
+
+    // Pair detected faces with the name label on the same tile: the name sits
+    // below the face (Meet/Zoom put it at the tile's bottom edge), roughly in
+    // the same horizontal region.
+    for (const f of msg.faces || []) {
+      if (!f.jpg) continue;
+      const fcx = f.x + f.w / 2;
+      const fBottom = f.y + f.h;
+      let match = null;
+      for (const n of names) {
+        const ncy = n.y + n.h / 2;
+        const gap = ncy - fBottom;
+        if (gap < -0.02 || gap > Math.max(f.h * 1.6, 0.12)) continue;
+        const dx = Math.abs(n.x + n.w / 2 - fcx);
+        if (dx > Math.max(f.w * 2.5, 0.14)) continue;
+        if (!match || gap < match.gap) match = { name: n.s, gap };
+      }
+      if (!match) continue;
+      const area = f.w * f.h;
+      const prev = this.faces.get(match.name);
+      if (!prev || area >= prev.area) {
+        this.faces.set(match.name, { area, jpg: Buffer.from(f.jpg, "base64") });
+      }
+    }
   }
 
   // Merge per-second samples into speaking intervals.
@@ -136,8 +165,20 @@ class Watcher extends EventEmitter {
       .filter(([, frames]) => frames >= 2)
       .sort((a, b) => b[1] - a[1])
       .map(([name, frames]) => ({ name, frames }));
+    // save the best face crop per rostered participant
+    const dir = this.store.meetingDir(this.meeting.id);
+    let faceIdx = 0;
+    for (const entry of roster) {
+      const f = this.faces.get(entry.name);
+      if (!f) continue;
+      if (faceIdx === 0) fs.mkdirSync(path.join(dir, "faces"), { recursive: true });
+      const file = `faces/${faceIdx++}.jpg`;
+      fs.writeFileSync(path.join(dir, file), f.jpg);
+      entry.face = file;
+    }
     const vision = {
       windowTitle: this.windowTitle,
+      windowApp: this.windowApp || null,
       roster,
       speaking: this.buildTimeline(),
     };

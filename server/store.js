@@ -82,12 +82,23 @@ function writeText(id, file, content) {
   fs.writeFileSync(path.join(meetingDir(id), file), content);
 }
 
+function getVision(id) {
+  const p = path.join(meetingDir(id), "vision.json");
+  if (!fs.existsSync(p)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function getMeeting(id) {
   return {
     meta: getMeta(id),
     transcript: getTranscript(id),
     notes: readText(id, "notes.md"),
     summary: readText(id, "summary.md"),
+    vision: getVision(id),
   };
 }
 
@@ -107,6 +118,7 @@ module.exports = {
   appendTranscript,
   readText,
   writeText,
+  getVision,
   getMeeting,
   deleteMeeting,
 };

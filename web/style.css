@@ -148,6 +148,30 @@ button.record:hover { filter: brightness(1.1); }
 
 #diarizeBtn { font-size: 12px; padding: 4px 12px; }
 
+#visionInfo {
+  font-size: 11px; color: var(--dim);
+  margin-bottom: 8px;
+}
+.vision-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vision-roster {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;
+}
+.vision-person {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg3); border: 1px solid var(--line);
+  border-radius: 12px; padding: 2px 9px 2px 3px;
+}
+.vision-person img, .speaker-chip img.face {
+  width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+}
+.vision-person .noface {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--line); font-size: 12px;
+}
+.head-btns { display: flex; gap: 6px; }
+#copyBtn { font-size: 12px; padding: 4px 12px; }
+
 #speakers {
   display: flex; flex-wrap: wrap; gap: 6px;
   margin-bottom: 10px;
