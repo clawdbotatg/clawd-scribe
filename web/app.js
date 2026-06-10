@@ -103,7 +103,7 @@ function renderMeetingList() {
 }
 
 // stable colors: "me" is always green; remote speakers get a palette color
-const SPK_COLORS = ["#6cb6ff", "#f69d50", "#dcbdfb", "#ef9eaa", "#7ce38b", "#fbd669"];
+const SPK_COLORS = ["#2c6cb0", "#c05a1f", "#7c4dab", "#b03a52", "#2e7d44", "#8f7415"];
 function speakerKey(s) {
   if (s.who === "me") return "me";
   if (s.speaker != null) return String(s.speaker);

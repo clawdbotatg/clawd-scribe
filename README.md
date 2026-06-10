@@ -1,4 +1,6 @@
-# ✍️ clawd-scribe
+# clawd-scribe
+
+<img src="web/mascot.png" width="180" align="right" alt="clawd-scribe mascot" />
 
 **Local, open-source meeting notes.** Like Granola, but nothing ever leaves your machine.
 
