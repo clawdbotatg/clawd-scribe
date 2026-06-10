@@ -30,7 +30,10 @@ const DEFAULTS = {
     segModel: path.join(__dirname, "..", "data", "models",
       "sherpa-onnx-pyannote-segmentation-3-0", "model.onnx"),
     embModel: path.join(__dirname, "..", "data", "models", "nemo_en_titanet_small.onnx"),
-    threshold: 0.5,
+    // agglomerative-clustering distance cutoff: higher merges more aggressively.
+    // 0.5 shattered a real 5-person, 3-hour call into 34 clusters; 1.1 got it
+    // exactly right. Lower this if distinct speakers get merged.
+    threshold: 1.1,
     minDurationOn: 0.3,
     minDurationOff: 0.5,
     auto: true, // run automatically when a recording stops

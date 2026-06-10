@@ -82,7 +82,7 @@ Edit `data/config.json` (created on first run):
   "keepAudio": true,      // save audio.wav per meeting (~230 MB/hour, stereo)
   "chunkSeconds": 12,     // live-transcription chunk size
   "diarization": {
-    "threshold": 0.5,     // lower = more speakers detected, higher = fewer
+    "threshold": 1.1,     // lower = more speakers detected, higher = fewer
     "auto": true          // identify speakers automatically on stop
   },
   "watcher": {

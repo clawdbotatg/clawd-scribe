@@ -53,7 +53,7 @@ if (samples.length < sampleRate) fail("audio too short to diarize");
 const sd = new sherpa.OfflineSpeakerDiarization({
   segmentation: { pyannote: { model: cfg.segModel }, debug: 0 },
   embedding: { model: cfg.embModel, debug: 0 },
-  clustering: { numClusters: -1, threshold: cfg.threshold },
+  clustering: { numClusters: cfg.numClusters || -1, threshold: cfg.threshold },
   minDurationOn: cfg.minDurationOn,
   minDurationOff: cfg.minDurationOff,
 });
