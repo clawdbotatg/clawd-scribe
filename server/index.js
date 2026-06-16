@@ -59,6 +59,7 @@ function startRecording(title) {
       watcherStatus = s;
       broadcast({ type: "watcher", ...s });
     });
+    watcher.on("frame", (frame) => broadcast({ type: "watcherFrame", frame }));
     watcher.start();
   }
 
@@ -210,6 +211,16 @@ const server = http.createServer(async (req, res) => {
           generating: [...generating],
           config: { llm: config.llm, whisperModel: config.whisperModel },
         });
+      }
+      // GET /api/watcher/debug — live vision-pipeline state for the debug UI
+      if (req.method === "GET" && parts[1] === "watcher" && parts[2] === "debug") {
+        return json(res, 200, watcher ? watcher.snapshot() : { active: false, recording: !!recorder });
+      }
+      // GET /api/watcher/frame.jpg — latest captured frame, drawn under the debug overlays
+      if (req.method === "GET" && parts[1] === "watcher" && parts[2] === "frame.jpg") {
+        if (!watcher || !watcher.lastFrameJpg) return json(res, 404, { error: "no frame" });
+        res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store" });
+        return res.end(watcher.lastFrameJpg);
       }
       // POST /api/record/start  { title }
       if (req.method === "POST" && parts[1] === "record" && parts[2] === "start") {

@@ -40,6 +40,8 @@ body {
   border: 2px solid var(--line);
 }
 #brand .tagline { display: block; font-size: 11px; color: var(--dim); font-weight: 400; }
+#brand .debug-link { color: var(--dim); }
+#brand .debug-link:hover { color: var(--accent); }
 
 button {
   font: inherit;

@@ -28,7 +28,9 @@ function readWavChannel(wavPath, which) {
     const len = buf.readUInt32LE(off + 4);
     if (id === "data") {
       dataOff = off + 8;
-      dataLen = Math.min(len, buf.length - dataOff);
+      // len is 0 while a recording is in progress (recorder patches the
+      // header on stop) — fall back to everything after the header.
+      dataLen = len ? Math.min(len, buf.length - dataOff) : buf.length - dataOff;
       break;
     }
     off += 8 + len + (len % 2);

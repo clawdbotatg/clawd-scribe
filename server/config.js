@@ -41,8 +41,10 @@ const DEFAULTS = {
   watcher: {
     enabled: true, // watch the meeting window for names + active speaker
     patterns: ["meet", "zoom", "teams", "webex"],
-    // active-speaker tile border colors: Meet blues, Zoom green
-    colors: [[26, 115, 232], [66, 133, 244], [35, 217, 89]],
+    // active-speaker tile border colors: Meet blues (classic + current
+    // light-cornflower #a8c7fa frame), Zoom green. Sampled from a real
+    // 2026-06 Meet call where the old blues matched zero pixels.
+    colors: [[26, 115, 232], [66, 133, 244], [168, 199, 250], [35, 217, 89]],
     tolerance: 90,
   },
 };

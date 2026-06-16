@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>clawd-scribe — vision debug</title>
+  <link rel="icon" type="image/png" href="mascot.png" />
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    #dbg-head {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 18px; border-bottom: 1px solid var(--line);
+      background: var(--bg2); flex-wrap: wrap;
+    }
+    #dbg-head .logo {
+      width: 30px; height: 30px; border-radius: 50%;
+      object-fit: cover; border: 2px solid var(--line);
+    }
+    #dbg-head h1 { font-size: 15px; margin: 0; }
+    #dbg-head h1 a { color: var(--text); text-decoration: none; }
+    #dbg-head h1 .sub { color: var(--dim); font-weight: 400; }
+    .chip {
+      font-size: 11px; padding: 3px 10px; border-radius: 12px;
+      background: var(--bg3); border: 1px solid var(--line);
+      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .chip b { font-weight: 600; }
+    .chip.ok { border-color: var(--green); color: var(--green); }
+    .chip.bad { border-color: var(--red); color: var(--red); }
+
+    #dbg-grid {
+      flex: 1; display: grid; min-height: 0;
+      grid-template-columns: minmax(0, 1.3fr) minmax(280px, 1fr);
+      grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+      gap: 1px; background: var(--line);
+    }
+    .panel { background: var(--bg); padding: 12px 16px; overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
+    .panel h2 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--dim); margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .panel h2 .note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+    /* live frame */
+    #frameWrap { position: relative; flex: 1; min-height: 0; }
+    #frameCanvas {
+      width: 100%; height: 100%; display: block;
+      background: #20242b; border-radius: 8px;
+    }
+    #legend { display: flex; gap: 14px; font-size: 11px; color: var(--dim); margin-top: 6px; flex-wrap: wrap; }
+    .key { display: inline-flex; align-items: center; gap: 5px; }
+    .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    /* roster */
+    #roster { display: flex; flex-direction: column; gap: 6px; }
+    .person { display: flex; align-items: center; gap: 9px; }
+    .person img, .person .noface {
+      width: 34px; height: 34px; border-radius: 50%; object-fit: cover;
+      background: var(--line); display: inline-flex; align-items: center;
+      justify-content: center; font-size: 15px; flex: none;
+    }
+    .person .info { flex: 1; min-width: 0; }
+    .person .nm { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .person .meta { font-size: 10px; color: var(--dim); }
+    .person .bar { height: 4px; border-radius: 2px; background: var(--bg3); margin-top: 3px; overflow: hidden; }
+    .person .bar > div { height: 100%; background: var(--accent); }
+
+    /* timeline */
+    #timelineCanvas { width: 100%; display: block; }
+
+    /* event log */
+    #log {
+      flex: 1; overflow-y: auto; font: 11px/1.6 ui-monospace, Menlo, monospace;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    #log .ln { border-bottom: 1px dotted var(--line); padding: 1px 0; }
+    #log .t { color: var(--accent); margin-right: 6px; }
+    #log .ev-frame { color: var(--dim); }
+    #log .ev-hear { color: var(--text); }
+    #log .ev-sys { color: var(--green); font-weight: 600; }
+    #log .ev-err { color: var(--red); font-weight: 600; }
+    .empty-note { color: var(--dim); font-size: 12px; margin: auto; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="dbg-head">
+    <img class="logo" src="mascot.png" alt="" />
+    <h1><a href="/">clawd-scribe</a> <span class="sub">/ vision debug</span></h1>
+    <span id="chipSource" class="chip">connecting…</span>
+    <span id="chipWindow" class="chip hidden"></span>
+    <span id="chipFrames" class="chip hidden"></span>
+    <span id="chipLast" class="chip hidden"></span>
+  </div>
+
+  <div id="dbg-grid">
+    <div class="panel">
+      <h2>Live frame <span class="note" id="frameNote">what the watcher sees, ~1fps</span></h2>
+      <div id="frameWrap"><canvas id="frameCanvas"></canvas></div>
+      <div id="legend">
+        <span class="key"><span class="swatch" style="background:#6fcf6f"></span> name candidate</span>
+        <span class="key"><span class="swatch" style="background:#8a8f98"></span> other OCR text</span>
+        <span class="key"><span class="swatch" style="background:#4f8ef7"></span> active speaker (matched)</span>
+        <span class="key"><span class="swatch" style="background:transparent;border:1px dashed rgba(79,142,247,0.7)"></span> highlight candidate</span>
+        <span class="key"><span class="swatch" style="background:#f2994a"></span> face</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Roster <span class="note" id="rosterNote"></span></h2>
+      <div id="roster"><div class="empty-note">no participants seen yet</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Event log <span class="note">frames · transcript · pipeline</span></h2>
+      <div id="log"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Visual speaking timeline <span class="note" id="tlNote">who was highlighted when</span></h2>
+      <canvas id="timelineCanvas" height="10"></canvas>
+      <div id="tlEmpty" class="empty-note">no active-speaker samples yet — needs a name inside a highlight rect</div>
+    </div>
+  </div>
+
+  <script src="debug.js"></script>
+</body>
+</html>

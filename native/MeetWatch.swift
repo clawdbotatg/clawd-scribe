@@ -3,6 +3,8 @@
 //   - all on-screen text with positions (Apple Vision OCR, fully local)
 //   - bounding rects of "active speaker" highlight pixels (Meet's blue /
 //     Zoom's green tile border), clustered on a coarse grid
+//   - a downscaled JPEG of the frame itself, so the local debug UI can show
+//     the overlays on top of what was actually seen (never leaves the daemon)
 // The daemon matches names to highlight rects to learn who is speaking when,
 // and fuses that with voice diarization to auto-name speakers.
 //
@@ -161,10 +163,25 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
         let texts = ocr(pb)
         // face crops are heavier (JPEG over stdout) — sample every 5th frame
         let faces = frameCount % 5 == 0 ? detectFaces(pb) : []
-        if texts.isEmpty && rects.isEmpty && faces.isEmpty { return }
+        // emit even detection-less frames: the debug UI wants to show what the
+        // watcher saw precisely when nothing was found
         var msg: [String: Any] = ["event": "frame", "texts": texts, "rects": rects]
         if !faces.isEmpty { msg["faces"] = faces }
+        if let img = frameJpeg(pb) { msg["img"] = img }
         emit(msg)
+    }
+
+    // Downscaled JPEG of the whole frame for the debug UI. ~1fps over a local
+    // pipe to the daemon; never written to disk.
+    private func frameJpeg(_ pb: CVPixelBuffer) -> String? {
+        var img = CIImage(cvPixelBuffer: pb)
+        let scale = min(1.0, 640.0 / Double(CVPixelBufferGetWidth(pb)))
+        if scale < 1 { img = img.transformed(by: CGAffineTransform(scaleX: scale, y: scale)) }
+        let q = CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String)
+        guard let jpg = ciContext.jpegRepresentation(
+            of: img, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, options: [q: 0.5]
+        ) else { return nil }
+        return jpg.base64EncodedString()
     }
 
     // Detect faces and emit small JPEG crops so the daemon can pair each face
@@ -237,15 +254,21 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
             y += step
         }
 
-        // connected components over grid cells with enough matches
+        // Connected components over grid cells with enough matches — but keep
+        // only border-ring-shaped ones. The active-speaker highlight is a thin
+        // hollow outline around one tile: its matched cells trace the bbox
+        // perimeter with an empty interior. Buttons, links, and blue video
+        // content are solid blobs (high interior fill) or far smaller than a
+        // tile, and they were flooding the output with bogus rects.
         var visited = [Bool](repeating: false, count: GRID_W * GRID_H)
         var rects: [[String: Double]] = []
         for start in 0..<grid.count where grid[start] >= 2 && !visited[start] {
             var queueIdx = [start]
             visited[start] = true
-            var minX = GRID_W, maxX = 0, minY = GRID_H, maxY = 0, cells = 0
+            var members: [Int] = []
+            var minX = GRID_W, maxX = 0, minY = GRID_H, maxY = 0
             while let cur = queueIdx.popLast() {
-                cells += 1
+                members.append(cur)
                 let cx = cur % GRID_W, cy = cur / GRID_W
                 minX = min(minX, cx); maxX = max(maxX, cx)
                 minY = min(minY, cy); maxY = max(maxY, cy)
@@ -259,12 +282,24 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
                     }
                 }
             }
-            if cells < 3 { continue }
+            let bw = maxX - minX + 1, bh = maxY - minY + 1
+            if bw < 4 || bh < 3 { continue } // smaller than any video tile
+            var interior = 0, onEdge = 0
+            for cell in members {
+                let cx = cell % GRID_W, cy = cell / GRID_W
+                if cx == minX || cx == maxX || cy == minY || cy == maxY { onEdge += 1 } else { interior += 1 }
+            }
+            let fill = Double(interior) / Double(max(1, (bw - 2) * (bh - 2)))
+            let cov = Double(onEdge) / Double(2 * (bw + bh) - 4)
+            // a ring is hollow (low fill) and traces most of its perimeter;
+            // rounded corners cost a few perimeter cells, hence 0.5 not higher
+            if fill > 0.35 || cov < 0.5 { continue }
             rects.append([
                 "x": r3(Double(minX) / Double(GRID_W)),
                 "y": r3(Double(minY) / Double(GRID_H)),
-                "w": r3(Double(maxX - minX + 1) / Double(GRID_W)),
-                "h": r3(Double(maxY - minY + 1) / Double(GRID_H)),
+                "w": r3(Double(bw) / Double(GRID_W)),
+                "h": r3(Double(bh) / Double(GRID_H)),
+                "cov": r3(cov),
             ])
         }
         return rects
