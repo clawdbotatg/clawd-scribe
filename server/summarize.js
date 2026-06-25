@@ -87,15 +87,30 @@ async function generateNotes({ transcript, userNotes, title, speakers = {} }, co
   return stripThinking(full).trim();
 }
 
-// Suggest a short, human-readable meeting title from the transcript (+ notes).
-// One non-streaming LLM call; returns a few-word title with no surrounding quotes.
-const TITLE_SYSTEM_PROMPT = `You name meetings. Given a transcript (and maybe the
-user's rough notes), reply with a single short title — 3 to 7 words — that captures
-what the meeting was about. Be specific: use project names, topics, or decisions that
-actually appear. No date, no "meeting" filler, no quotes, no punctuation at the end.
+// Suggest a meeting title naming WHO the meeting is with, from the known
+// participant names plus the transcript. One non-streaming LLM call; returns a
+// short title with no surrounding quotes.
+const TITLE_SYSTEM_PROMPT = `You title meetings by WHO they are with.
+
+You get a list of known participant names and a transcript. "Me" is the user whose
+notes these are — the host — so do NOT name the host; name the OTHER people.
+
+Reply with a short title naming the people in the meeting. Rules:
+- If a participant list is provided, the names in your title MUST come ONLY from that
+  list. Do not introduce any name that isn't in it, even if the transcript mentions
+  other people. Pick the 1-2 most central participants from the list.
+- Only if the participant list is empty may you pull names from the transcript
+  (greetings, introductions, people addressing each other).
+- Never name the host. If a listed name is clearly the host/me, skip it.
+- Format like "Coltron & Abdullah Umar" or "Call with Tom Chen". For 1-2 people list
+  them; for 3+ use the two most-central names then "& others".
+- You may add a 2-4 word topic after an em dash if it's obvious, e.g.
+  "Tom Chen — ENS funding". Keep the whole thing under ~8 words.
+- If you truly cannot identify any person, fall back to a short topic instead.
+- No date, no "Meeting" filler, no quotes, no trailing punctuation.
 Output only the title on one line, nothing else.`;
 
-async function suggestTitle({ transcript, userNotes, speakers = {} }, config) {
+async function suggestTitle({ transcript, userNotes, speakers = {}, participants = [] }, config) {
   const transcriptText = transcript
     .map((s) => {
       const label = speakerLabel(s, speakers);
@@ -105,6 +120,10 @@ async function suggestTitle({ transcript, userNotes, speakers = {} }, config) {
     .slice(0, 6000); // a title needs context, not the whole call
 
   let user = "";
+  const names = [...new Set(participants.filter((n) => n && n.trim()))];
+  user += names.length
+    ? `Known participants (besides me, the host): ${names.join(", ")}\n\n`
+    : `Known participants: none identified yet — read names from the transcript.\n\n`;
   if (userNotes && userNotes.trim()) user += `My rough notes:\n${userNotes.trim()}\n\n`;
   user += `Transcript:\n${transcriptText || "(no transcript)"}`;
 

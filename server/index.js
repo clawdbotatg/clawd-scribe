@@ -91,16 +91,19 @@ async function stopRecording() {
   meta.status = "done";
   store.saveMeta(meta);
   broadcast({ type: "meetingDone", meeting: meta });
-  // auto-name the meeting if the user never gave it a real title
-  if (isGenericTitle(meta.title) && store.getTranscript(meta.id).length) {
-    runRetitle(meta.id).catch((e) => console.error("[retitle]", e.message));
-  }
+  const willDiarize = config.diarization.auto && config.keepAudio && modelsAvailable(config);
   if (config.diarization.auto && config.keepAudio) {
-    if (modelsAvailable(config)) {
+    if (willDiarize) {
+      // retitle runs *after* diarization so it has named speakers + roster to work with
       runDiarize(meta.id).catch((e) => console.error("[diarize]", e.message));
     } else {
       console.error("[diarize] skipped — models not found at configured paths (see data/config.json)");
     }
+  }
+  // auto-name the meeting if the user never gave it a real title; when diarization
+  // is running, autoRetitle() is triggered from runDiarize once names are known.
+  if (!willDiarize && isGenericTitle(meta.title) && store.getTranscript(meta.id).length) {
+    runRetitle(meta.id).catch((e) => console.error("[retitle]", e.message));
   }
   return meta;
 }
@@ -119,6 +122,11 @@ async function runDiarize(id) {
       speakerCount: result.speakerCount,
       autoNames: result.autoNames || {},
     });
+    // now that speakers are named, auto-name the meeting if still untitled
+    const meta = store.getMeta(id);
+    if (isGenericTitle(meta.title) && store.getTranscript(id).length) {
+      runRetitle(id).catch((e) => console.error("[retitle]", e.message));
+    }
   } catch (e) {
     broadcast({ type: "diarizeError", meetingId: id, message: e.message });
     throw e;
@@ -168,8 +176,18 @@ async function runRetitle(id) {
   if (!m.transcript.length && !m.notes.trim()) throw new Error("nothing to name yet");
   retitling.add(id);
   try {
+    // who is this meeting with? named speakers (skip generic "Speaker N") + faces
+    // read off the meeting window by the vision watcher.
+    const speakers = m.meta.speakers || {};
+    const namedSpeakers = Object.entries(speakers)
+      .filter(([k, v]) => k !== "me" && v && !/^speaker\s*\d+$/i.test(v.trim()))
+      .map(([, v]) => v.trim());
+    const rosterNames = ((m.vision && m.vision.roster) || [])
+      .map((r) => r.name)
+      .filter(Boolean);
+    const participants = [...new Set([...namedSpeakers, ...rosterNames])];
     const title = await suggestTitle(
-      { transcript: m.transcript, userNotes: m.notes, speakers: m.meta.speakers || {} },
+      { transcript: m.transcript, userNotes: m.notes, speakers, participants },
       config
     );
     if (!title) throw new Error("model returned an empty title");
