@@ -9,6 +9,8 @@ let state = {
   recStart: null,
   generatingFor: null,
   streamBuf: "",
+  search: "",        // current search query ("" = show full list)
+  searchResults: [], // results from /api/search when search is active
 };
 
 // --- tiny markdown renderer (headers, bullets, bold/italic/code, checkboxes) ---
@@ -81,14 +83,24 @@ async function api(method, path, body) {
 function renderMeetingList() {
   const el = $("meetings");
   el.innerHTML = "";
-  for (const m of state.meetings) {
+  const searching = !!state.search;
+  const items = searching ? state.searchResults : state.meetings;
+  if (searching && !items.length) {
+    el.innerHTML = `<div class="no-results">No meetings match “${esc(state.search)}”.</div>`;
+    return;
+  }
+  for (const m of items) {
     const div = document.createElement("div");
     div.className =
       "meeting-item" +
       (state.current && state.current.meta.id === m.id ? " active" : "");
+    const hit = searching && m.snippet
+      ? `<span class="snip"><span class="where">${esc(m.matchIn)}</span> ${esc(m.snippet)}</span>`
+      : "";
     div.innerHTML = `
       <span class="t">${esc(m.title)}</span>
       <span class="d">${fmtDate(m.startedAt)}${m.durationSec ? " · " + fmtTime(m.durationSec) : ""}${m.status === "recording" ? " · ● rec" : ""}</span>
+      ${hit}
       <button class="del" title="delete">✕</button>`;
     div.onclick = () => openMeeting(m.id);
     div.querySelector(".del").onclick = async (e) => {
@@ -96,10 +108,29 @@ function renderMeetingList() {
       if (!confirm(`Delete "${m.title}"?`)) return;
       await api("DELETE", "meetings/" + m.id);
       if (state.current && state.current.meta.id === m.id) showEmpty();
+      if (searching) await runSearch(state.search);
       await refreshMeetings();
     };
     el.appendChild(div);
   }
+}
+
+// --- search ---
+let searchTimer = null;
+async function runSearch(q) {
+  state.search = q.trim();
+  if (!state.search) {
+    state.searchResults = [];
+    renderMeetingList();
+    return;
+  }
+  try {
+    state.searchResults = await api("GET", "search?q=" + encodeURIComponent(state.search));
+  } catch (e) {
+    state.searchResults = [];
+    toast("Search failed: " + e.message);
+  }
+  renderMeetingList();
 }
 
 // stable colors: "me" is always green; remote speakers get a palette color
@@ -248,7 +279,8 @@ async function openMeeting(id) {
 
 async function refreshMeetings() {
   state.meetings = await api("GET", "meetings");
-  renderMeetingList();
+  if (state.search) await runSearch(state.search);
+  else renderMeetingList();
 }
 
 // --- recording controls ---
@@ -333,6 +365,33 @@ $("title").addEventListener("change", async () => {
   await refreshMeetings();
 });
 
+// --- AI name the meeting ---
+$("nameBtn").onclick = async () => {
+  if (!state.current) return;
+  const btn = $("nameBtn");
+  btn.disabled = true;
+  btn.textContent = "naming…";
+  try {
+    const { title } = await api("POST", `meetings/${state.current.meta.id}/retitle`);
+    $("title").value = title;
+    state.current.meta.title = title;
+    await refreshMeetings();
+    toast(`Named “${title}”`, true);
+  } catch (e) {
+    toast("Naming failed: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✨ Name";
+  }
+};
+
+// --- search box ---
+$("search").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = $("search").value;
+  searchTimer = setTimeout(() => runSearch(q), 200);
+});
+
 // --- generate notes ---
 $("generateBtn").onclick = async () => {
   if (!state.current) return;
@@ -414,6 +473,14 @@ function handleWS(msg) {
       $("diarizeBtn").disabled = false;
       $("diarizeBtn").textContent = "👥 Identify speakers";
       toast("Speaker identification failed: " + msg.message);
+      break;
+    case "titleUpdated":
+      if (state.current && state.current.meta.id === msg.meetingId) {
+        state.current.meta.title = msg.title;
+        $("title").value = msg.title;
+        toast(`Auto-named “${msg.title}”`, true);
+      }
+      refreshMeetings();
       break;
     case "speakersUpdated":
       if (state.current && state.current.meta.id === msg.meetingId) {

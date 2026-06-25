@@ -87,4 +87,48 @@ async function generateNotes({ transcript, userNotes, title, speakers = {} }, co
   return stripThinking(full).trim();
 }
 
-module.exports = { generateNotes };
+// Suggest a short, human-readable meeting title from the transcript (+ notes).
+// One non-streaming LLM call; returns a few-word title with no surrounding quotes.
+const TITLE_SYSTEM_PROMPT = `You name meetings. Given a transcript (and maybe the
+user's rough notes), reply with a single short title — 3 to 7 words — that captures
+what the meeting was about. Be specific: use project names, topics, or decisions that
+actually appear. No date, no "meeting" filler, no quotes, no punctuation at the end.
+Output only the title on one line, nothing else.`;
+
+async function suggestTitle({ transcript, userNotes, speakers = {} }, config) {
+  const transcriptText = transcript
+    .map((s) => {
+      const label = speakerLabel(s, speakers);
+      return `${label ? label + ": " : ""}${s.text}`;
+    })
+    .join("\n")
+    .slice(0, 6000); // a title needs context, not the whole call
+
+  let user = "";
+  if (userNotes && userNotes.trim()) user += `My rough notes:\n${userNotes.trim()}\n\n`;
+  user += `Transcript:\n${transcriptText || "(no transcript)"}`;
+
+  const res = await fetch(config.llm.url.replace(/\/$/, "") + "/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: config.llm.model,
+      stream: false,
+      messages: [
+        { role: "system", content: TITLE_SYSTEM_PROMPT },
+        { role: "user", content: user },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`LLM endpoint ${config.llm.url} returned ${res.status}: ${await res.text()}`);
+  }
+  const data = await res.json();
+  let title = stripThinking((data.message && data.message.content) || "").trim();
+  // take the first non-empty line, strip wrapping quotes / trailing punctuation
+  title = (title.split("\n").find((l) => l.trim()) || "").trim();
+  title = title.replace(/^["'`]+|["'`]+$/g, "").replace(/[.\s]+$/, "").trim();
+  return title.slice(0, 80);
+}
+
+module.exports = { generateNotes, suggestTitle };

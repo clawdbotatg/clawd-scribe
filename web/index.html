@@ -23,6 +23,9 @@
       <div id="watchBadge" class="hidden"></div>
       <button id="stopBtn">■ Stop</button>
     </div>
+    <div id="searchWrap">
+      <input id="search" type="search" placeholder="🔍 Search meetings…" spellcheck="false" />
+    </div>
     <div id="meetings"></div>
   </aside>
 
@@ -37,7 +40,10 @@
 
     <div id="meeting" class="hidden">
       <header>
-        <input id="title" spellcheck="false" />
+        <div class="title-row">
+          <input id="title" spellcheck="false" />
+          <button id="nameBtn" title="Name this meeting from its transcript with AI">✨ Name</button>
+        </div>
         <div id="meetingMeta"></div>
       </header>
 

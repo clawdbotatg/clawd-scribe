@@ -7,7 +7,7 @@ const { WebSocketServer } = require("ws");
 const store = require("./store");
 const configMod = require("./config");
 const { Recorder } = require("./recorder");
-const { generateNotes } = require("./summarize");
+const { generateNotes, suggestTitle } = require("./summarize");
 const { diarizeMeeting, modelsAvailable } = require("./diarize");
 const { Watcher } = require("./watcher");
 
@@ -91,6 +91,10 @@ async function stopRecording() {
   meta.status = "done";
   store.saveMeta(meta);
   broadcast({ type: "meetingDone", meeting: meta });
+  // auto-name the meeting if the user never gave it a real title
+  if (isGenericTitle(meta.title) && store.getTranscript(meta.id).length) {
+    runRetitle(meta.id).catch((e) => console.error("[retitle]", e.message));
+  }
   if (config.diarization.auto && config.keepAudio) {
     if (modelsAvailable(config)) {
       runDiarize(meta.id).catch((e) => console.error("[diarize]", e.message));
@@ -149,6 +153,33 @@ async function runGenerate(id) {
     throw e;
   } finally {
     generating.delete(id);
+  }
+}
+
+// --- AI title naming ---
+const retitling = new Set();
+// A title is "generic" if the user never named it — the default is "Meeting <date>".
+function isGenericTitle(title) {
+  return !title || /^meeting\b/i.test(title.trim());
+}
+async function runRetitle(id) {
+  if (retitling.has(id)) throw new Error("already naming this meeting");
+  const m = store.getMeeting(id);
+  if (!m.transcript.length && !m.notes.trim()) throw new Error("nothing to name yet");
+  retitling.add(id);
+  try {
+    const title = await suggestTitle(
+      { transcript: m.transcript, userNotes: m.notes, speakers: m.meta.speakers || {} },
+      config
+    );
+    if (!title) throw new Error("model returned an empty title");
+    const meta = store.getMeta(id);
+    meta.title = title;
+    store.saveMeta(meta);
+    broadcast({ type: "titleUpdated", meetingId: id, title });
+    return title;
+  } finally {
+    retitling.delete(id);
   }
 }
 
@@ -235,6 +266,10 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "GET" && parts[1] === "meetings" && !parts[2]) {
         return json(res, 200, store.listMeetings());
       }
+      // GET /api/search?q=...
+      if (req.method === "GET" && parts[1] === "search") {
+        return json(res, 200, store.searchMeetings(url.searchParams.get("q") || ""));
+      }
       if (parts[1] === "meetings" && parts[2]) {
         const id = parts[2];
         // GET /api/meetings/:id
@@ -267,6 +302,10 @@ const server = http.createServer(async (req, res) => {
         if (req.method === "POST" && parts[3] === "generate") {
           runGenerate(id).catch((e) => console.error("[generate]", e.message));
           return json(res, 202, { ok: true });
+        }
+        // POST /api/meetings/:id/retitle — AI-name the meeting from its transcript
+        if (req.method === "POST" && parts[3] === "retitle") {
+          return json(res, 200, { title: await runRetitle(id) });
         }
         // POST /api/meetings/:id/diarize
         if (req.method === "POST" && parts[3] === "diarize") {
