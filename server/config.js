@@ -14,9 +14,22 @@ function findWhisperModel() {
   return candidates.find((p) => fs.existsSync(p)) || candidates[0];
 }
 
+// Resolve whisper-cli to an ABSOLUTE path. The daemon is often launched from the
+// "Clawd Scribe.app" bundle, and apps launched from Finder do NOT inherit the
+// shell's Homebrew PATH — so a bare "whisper-cli" spawn dies with ENOENT even
+// though it runs fine from a terminal. Probe the known install locations first,
+// and only fall back to the bare name (PATH lookup) for shell-launched setups.
+function resolveWhisperBin() {
+  const candidates = [
+    "/opt/homebrew/bin/whisper-cli", // Apple Silicon Homebrew
+    "/usr/local/bin/whisper-cli", // Intel Homebrew
+  ];
+  return candidates.find((p) => fs.existsSync(p)) || "whisper-cli";
+}
+
 const DEFAULTS = {
   port: 3123,
-  whisperBin: "whisper-cli",
+  whisperBin: null, // resolved below if absent (see resolveWhisperBin)
   whisperModel: null, // resolved below if absent
   whisperThreads: 4,
   // Any OpenAI-compatible or Ollama endpoint works here. Local by default.
@@ -66,6 +79,7 @@ function load() {
     watcher: { ...DEFAULTS.watcher, ...(cfg.watcher || {}) },
   };
   if (!merged.whisperModel) merged.whisperModel = findWhisperModel();
+  if (!merged.whisperBin) merged.whisperBin = resolveWhisperBin();
   // Persist so the user has a file to edit.
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
