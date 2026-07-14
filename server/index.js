@@ -2,6 +2,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require("child_process");
 const { WebSocketServer } = require("ws");
 
 const store = require("./store");
@@ -43,7 +44,13 @@ function startRecording(title) {
     console.error("[recorder]", e.message);
     broadcast({ type: "recError", message: e.message });
   });
-  recorder.on("helperLog", (msg) => console.error("[audiocap]", msg.event, msg.detail || ""));
+  recorder.on("helperLog", (msg) => {
+    console.error("[audiocap]", msg.event, msg.detail || "");
+    if (msg.event === "warn") broadcast({ type: "recError", message: `capture warning: ${msg.detail}` });
+  });
+  recorder.on("dead", () =>
+    handleCaptureDead(meeting).catch((e) => console.error("[watchdog]", e.message))
+  );
   recorder.on("helperExit", (code) => {
     console.error("[audiocap] exited unexpectedly, code", code);
     broadcast({ type: "recError", message: `audio capture exited (code ${code})` });
@@ -106,6 +113,72 @@ async function stopRecording() {
     runRetitle(meta.id).catch((e) => console.error("[retitle]", e.message));
   }
   return meta;
+}
+
+// --- capture watchdog: dead audio → relaunch the whole daemon ---
+// macOS can silently revoke the daemon's mic/system-audio grant while it runs
+// for days (System Settings still shows the toggles ON); respawning audiocap
+// doesn't help because TCC attributes the grant to the daemon, so the only
+// cure is a fresh launch of the app. The daemon restarts itself and resumes
+// the recording on boot, capped so a genuinely revoked permission can't loop.
+const RESUME_PATH = path.join(__dirname, "..", "data", "tmp", "resume.json");
+const MAX_CAPTURE_RESTARTS = 2;
+
+function readResumeMarker() {
+  try {
+    const m = JSON.parse(fs.readFileSync(RESUME_PATH, "utf8"));
+    if (Date.now() - new Date(m.at).getTime() < 3 * 60 * 1000) return m;
+  } catch {}
+  return null;
+}
+
+async function handleCaptureDead(meeting) {
+  const attempts = (readResumeMarker() || {}).attempts || 0;
+  console.error(`[watchdog] audio capture dead, restart attempt ${attempts + 1}`);
+  const title = meeting.title;
+  await stopRecording();
+  if (attempts >= MAX_CAPTURE_RESTARTS) {
+    try { fs.unlinkSync(RESUME_PATH); } catch {}
+    broadcast({
+      type: "recError",
+      message:
+        "no audio even after restarting twice — check Microphone and Screen & System Audio Recording in System Settings, then quit and reopen Clawd Scribe",
+    });
+    return;
+  }
+  broadcast({
+    type: "recError",
+    message: "no audio coming in (stale macOS permission?) — restarting Clawd Scribe, recording resumes in ~15s",
+  });
+  fs.mkdirSync(path.dirname(RESUME_PATH), { recursive: true });
+  fs.writeFileSync(RESUME_PATH, JSON.stringify({ title, at: new Date().toISOString(), attempts: attempts + 1 }));
+  // free the port so the launcher starts a fresh daemon instead of just
+  // opening the UI, then relaunch through launchd for clean TCC attribution
+  server.close();
+  spawn("open", ["-a", "Clawd Scribe"], { detached: true, stdio: "ignore" }).unref();
+  setTimeout(() => process.exit(0), 500);
+}
+
+function resumeAfterRestart() {
+  const m = readResumeMarker();
+  if (!m) {
+    try { fs.unlinkSync(RESUME_PATH); } catch {} // stale marker, if any
+    return;
+  }
+  console.error(`[watchdog] daemon restarted — resuming recording (attempt ${m.attempts})`);
+  try {
+    startRecording(m.title);
+  } catch (e) {
+    return console.error("[watchdog]", e.message);
+  }
+  // only a healthy stream clears the marker, so a still-dead capture keeps
+  // its attempt count and handleCaptureDead can give up at the cap
+  setTimeout(() => {
+    if (recorder && recorder.pcmBytes > 0) {
+      try { fs.unlinkSync(RESUME_PATH); } catch {}
+      broadcast({ type: "recError", message: "recording resumed — audio is flowing again" });
+    }
+  }, 15000);
 }
 
 // --- diarization ---
@@ -388,4 +461,5 @@ server.listen(config.port, "127.0.0.1", () => {
   console.log(`clawd-scribe listening on http://localhost:${config.port}`);
   console.log(`whisper model: ${config.whisperModel}`);
   console.log(`llm: ${config.llm.model} @ ${config.llm.url}`);
+  resumeAfterRestart();
 });

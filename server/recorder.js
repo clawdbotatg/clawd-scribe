@@ -122,6 +122,9 @@ class Recorder extends EventEmitter {
     this.helper = null;
     this.queue = Promise.resolve();
     this.stopped = false;
+    this.pcmBytes = 0;
+    this.watchdog = null;
+    this.respawned = false;
     this.startTime = Date.now();
     this.wavStream = null;
     this.wavBytes = 0;
@@ -142,6 +145,11 @@ class Recorder extends EventEmitter {
       this.wavStream.write(wavHeader(0, RATE, 2)); // sizes patched in finalizeWav()
     }
 
+    this.spawnHelper();
+    this.armWatchdog();
+  }
+
+  spawnHelper() {
     const bin = path.join(__dirname, "..", "native", "audiocap");
     this.helper = spawn(bin, [], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -163,6 +171,34 @@ class Recorder extends EventEmitter {
     });
   }
 
+  // The helper streams PCM continuously (silence is still bytes), so a stalled
+  // stdout means capture is broken — e.g. macOS silently revoked the audio
+  // grant from the long-running daemon. One respawn covers a crashed helper;
+  // a stale grant needs the whole daemon relaunched, which "dead" asks for.
+  armWatchdog() {
+    clearTimeout(this.watchdog);
+    const seen = this.pcmBytes;
+    this.watchdog = setTimeout(() => {
+      if (this.stopped) return;
+      if (this.pcmBytes > seen) {
+        this.respawned = false;
+        return this.armWatchdog();
+      }
+      if (!this.respawned) {
+        this.respawned = true;
+        this.emit("helperLog", { event: "watchdog", detail: "no audio for 6s — respawning capture helper" });
+        if (this.helper) {
+          this.helper.removeAllListeners("close");
+          this.helper.kill("SIGKILL");
+        }
+        this.spawnHelper();
+        this.armWatchdog();
+      } else {
+        this.emit("dead");
+      }
+    }, 6000);
+  }
+
   onPCM(data) {
     // keep frames (4 bytes: L int16 + R int16) intact across packets
     let buf = this.leftover.length ? Buffer.concat([this.leftover, data]) : data;
@@ -174,6 +210,7 @@ class Recorder extends EventEmitter {
       this.leftover = Buffer.alloc(0);
     }
     if (!buf.length) return;
+    this.pcmBytes += buf.length;
 
     if (this.wavStream) {
       this.wavStream.write(Buffer.from(buf));
@@ -260,6 +297,7 @@ class Recorder extends EventEmitter {
 
   async stop() {
     this.stopped = true;
+    clearTimeout(this.watchdog);
     if (this.helper) {
       this.helper.kill("SIGTERM");
       this.helper = null;
