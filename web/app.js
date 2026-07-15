@@ -412,80 +412,35 @@ $("diarizeBtn").onclick = async () => {
   }
 };
 
-// --- connect Claude (MCP install snippets) ---
-function mcpUrl() {
-  return location.origin + "/mcp";
-}
-function skillBlock() {
-  return {
-    title: "Skill / instructions",
-    hint: "paste into your Claude agent's instructions / CLAUDE.md — includes the endpoint so the agent knows where to connect",
-    text: [
-      "# clawd-scribe — my recorded calls",
-      "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
-      "through the `clawd-scribe` MCP server (Streamable HTTP at " + mcpUrl() + ").",
-      "If the tools aren't connected yet, register it once with:",
-      "`claude mcp add --scope user --transport http clawd-scribe " + mcpUrl() + "`",
-      "When I ask about a past call, meeting, or conversation, use its tools:",
-      "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
-      "- `list_meetings(limit, offset)` — recent calls, newest first.",
-      "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
-      "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
-      '"Me" in transcripts is always me; other speakers are named when identified.',
-    ].join("\n"),
-  };
-}
-function stdioBlock({ serverPath, nodePath }) {
-  return {
-    title: "stdio (works even when this daemon is down)",
-    hint: "merge into ~/Library/Application Support/Claude/claude_desktop_config.json, then restart Claude Desktop",
-    text: JSON.stringify(
-      { mcpServers: { "clawd-scribe": { command: nodePath, args: [serverPath] } } },
-      null,
-      2
-    ),
-  };
+// --- connect Claude: one paste that says where the server is and how to use it ---
+function connectPaste() {
+  const url = location.origin + "/mcp";
+  return [
+    "My recorded calls/meetings live in a local MCP server (clawd-scribe) at " + url,
+    "",
+    "Connect to it (once): claude mcp add --scope user --transport http clawd-scribe " + url,
+    "",
+    "Then use its tools whenever I ask about a past call, meeting, or conversation:",
+    "- search_meetings(query) — full-text search over titles, people, notes, summaries, transcripts. Start here.",
+    "- list_meetings(limit, offset) — recent calls, newest first.",
+    "- get_meeting(id) — one call's participants, my notes, and the generated summary.",
+    "- get_transcript(id, offset) — the word-for-word transcript (paged; only when exact wording matters).",
+    '"Me" in transcripts is always me; other speakers are named when identified.',
+  ].join("\n");
 }
 
-$("connectClaudeBtn").onclick = async () => {
+$("connectClaudeBtn").onclick = () => {
   const wrap = $("connectBlocks");
-  wrap.innerHTML = "";
-  const blocks = [
-    {
-      title: "Claude Code",
-      hint: "run once in any terminal — the daemon must be running when Claude uses the tools",
-      text: `claude mcp add --scope user --transport http clawd-scribe ${mcpUrl()}`,
-    },
-    {
-      title: "Claude Desktop — custom connector",
-      hint: "Settings → Connectors → Add custom connector, paste this URL",
-      text: mcpUrl(),
-    },
-  ];
-  try {
-    blocks.push(stdioBlock(await api("GET", "mcp")));
-  } catch {
-    // pre-/api/mcp daemon: only the stdio snippet needs paths from the server
-    blocks.push({
-      title: "stdio (works even when this daemon is down)",
-      hint: "restart clawd-scribe to get this snippet with absolute paths filled in",
-      text: "(unavailable until the daemon is restarted — the URL options above still apply)",
-    });
-  }
-  blocks.push(skillBlock());
-  for (const b of blocks) {
-    const div = document.createElement("div");
-    div.className = "connect-block";
-    div.innerHTML = `<div class="connect-head"><b>${esc(b.title)}</b><span class="hint">${esc(b.hint)}</span>
-      <button class="copy-snippet">⧉ Copy</button></div><pre></pre>`;
-    div.querySelector("pre").textContent = b.text;
-    div.querySelector(".copy-snippet").onclick = async (e) => {
-      await navigator.clipboard.writeText(b.text);
-      e.target.textContent = "✓ copied";
-      setTimeout(() => (e.target.textContent = "⧉ Copy"), 1500);
-    };
-    wrap.appendChild(div);
-  }
+  const text = connectPaste();
+  wrap.innerHTML = `<div class="connect-block"><div class="connect-head">
+    <span class="hint">paste this into any Claude agent — it has everything: where the server is and how to use it</span>
+    <button class="copy-snippet">⧉ Copy</button></div><pre></pre></div>`;
+  wrap.querySelector("pre").textContent = text;
+  wrap.querySelector(".copy-snippet").onclick = async (e) => {
+    await navigator.clipboard.writeText(text);
+    e.target.textContent = "✓ copied";
+    setTimeout(() => (e.target.textContent = "⧉ Copy"), 1500);
+  };
   $("connectModal").classList.remove("hidden");
 };
 $("connectClose").onclick = () => $("connectModal").classList.add("hidden");
