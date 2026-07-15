@@ -7,7 +7,9 @@
 const fs = require("fs");
 const path = require("path");
 
-const DATA_DIR = path.join(__dirname, "..", "data");
+// SCRIBE_DATA overrides the data folder — used when the MCP server (mcp/server.js)
+// runs from a different checkout than the daemon that recorded the meetings.
+const DATA_DIR = process.env.SCRIBE_DATA || path.join(__dirname, "..", "data");
 const MEETINGS_DIR = path.join(DATA_DIR, "meetings");
 
 function ensureDirs() {

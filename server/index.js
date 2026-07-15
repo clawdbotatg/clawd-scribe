@@ -361,6 +361,15 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "GET" && parts[1] === "search") {
         return json(res, 200, store.searchMeetings(url.searchParams.get("q") || ""));
       }
+      // GET /api/mcp — absolute paths the "Connect Claude" panel needs to build
+      // copy-pasteable install snippets (node path matters: GUI apps like Claude
+      // Desktop don't have homebrew on PATH).
+      if (req.method === "GET" && parts[1] === "mcp") {
+        return json(res, 200, {
+          serverPath: path.join(__dirname, "..", "mcp", "server.js"),
+          nodePath: process.execPath,
+        });
+      }
       if (parts[1] === "meetings" && parts[2]) {
         const id = parts[2];
         // GET /api/meetings/:id

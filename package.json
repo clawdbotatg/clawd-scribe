@@ -5,6 +5,7 @@
   "license": "MIT",
   "scripts": {
     "start": "node server/index.js",
+    "mcp": "node mcp/server.js",
     "build:native": "swiftc -O -o native/audiocap native/AudioCapture.swift && swiftc -O -o native/meetwatch native/MeetWatch.swift"
   },
   "dependencies": {

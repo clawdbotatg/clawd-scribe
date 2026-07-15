@@ -412,6 +412,77 @@ $("diarizeBtn").onclick = async () => {
   }
 };
 
+// --- connect Claude (MCP install snippets) ---
+function connectBlocks({ serverPath, nodePath }) {
+  const desktopConfig = JSON.stringify(
+    { mcpServers: { "clawd-scribe": { command: nodePath, args: [serverPath] } } },
+    null,
+    2
+  );
+  const skill = [
+    "# clawd-scribe — my recorded calls",
+    "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
+    "through the `clawd-scribe` MCP server. When I ask about a past call, meeting, or",
+    "conversation, use its tools:",
+    "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
+    "- `list_meetings(limit, offset)` — recent calls, newest first.",
+    "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
+    "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
+    '"Me" in transcripts is always me; other speakers are named when identified.',
+  ].join("\n");
+  return [
+    {
+      title: "Claude Code",
+      hint: "run this once in any terminal",
+      text: `claude mcp add --scope user clawd-scribe -- ${sh(nodePath)} ${sh(serverPath)}`,
+    },
+    {
+      title: "Claude Desktop",
+      hint: "merge into ~/Library/Application Support/Claude/claude_desktop_config.json, then restart Claude Desktop",
+      text: desktopConfig,
+    },
+    {
+      title: "Skill / instructions (optional)",
+      hint: "paste into your Claude project instructions or CLAUDE.md so it knows when to reach for these tools",
+      text: skill,
+    },
+  ];
+}
+function sh(p) {
+  return /[^A-Za-z0-9_\/.-]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p;
+}
+
+$("connectClaudeBtn").onclick = async () => {
+  const wrap = $("connectBlocks");
+  wrap.innerHTML = "";
+  let info;
+  try {
+    info = await api("GET", "mcp");
+  } catch {
+    wrap.innerHTML = `<p class="modal-intro">This daemon predates the MCP endpoint — restart clawd-scribe (it self-updates on start) and try again.</p>`;
+    $("connectModal").classList.remove("hidden");
+    return;
+  }
+  for (const b of connectBlocks(info)) {
+    const div = document.createElement("div");
+    div.className = "connect-block";
+    div.innerHTML = `<div class="connect-head"><b>${esc(b.title)}</b><span class="hint">${esc(b.hint)}</span>
+      <button class="copy-snippet">⧉ Copy</button></div><pre></pre>`;
+    div.querySelector("pre").textContent = b.text;
+    div.querySelector(".copy-snippet").onclick = async (e) => {
+      await navigator.clipboard.writeText(b.text);
+      e.target.textContent = "✓ copied";
+      setTimeout(() => (e.target.textContent = "⧉ Copy"), 1500);
+    };
+    wrap.appendChild(div);
+  }
+  $("connectModal").classList.remove("hidden");
+};
+$("connectClose").onclick = () => $("connectModal").classList.add("hidden");
+$("connectModal").onclick = (e) => {
+  if (e.target === $("connectModal")) $("connectModal").classList.add("hidden");
+};
+
 // --- websocket ---
 function connectWS() {
   const ws = new WebSocket(`ws://${location.host}/ws`);

@@ -98,6 +98,34 @@ To sanity-check the vision pipeline without a real meeting, open
 `http://localhost:3123/fake-meet.html#go` — a mock Meet page that cycles the
 active-speaker border between two named tiles.
 
+## Ask Claude about your calls (MCP)
+
+clawd-scribe ships a local [MCP](https://modelcontextprotocol.io) server (`mcp/server.js`,
+zero dependencies) so Claude Desktop / Claude Code can **search, list, and read every call
+you've recorded** — transcripts with speaker names, your notes, and the generated summaries.
+It reads the same `data/meetings/` files directly, so it works even when the daemon is down,
+and nothing leaves your machine: the tools are read-only file access, not a network service.
+
+The easy way: hit **🔌 Connect Claude** at the bottom of the sidebar and copy the snippet
+for your Claude (it fills in the absolute paths for you). By hand:
+
+```bash
+# Claude Code
+claude mcp add --scope user clawd-scribe -- node /path/to/clawd-scribe/mcp/server.js
+```
+
+```json
+// Claude Desktop — ~/Library/Application Support/Claude/claude_desktop_config.json
+// use an absolute node path (GUI apps don't see homebrew's PATH)
+{ "mcpServers": { "clawd-scribe": {
+  "command": "/opt/homebrew/bin/node",
+  "args": ["/path/to/clawd-scribe/mcp/server.js"] } } }
+```
+
+Tools: `search_meetings` (full-text across everything), `list_meetings`, `get_meeting`
+(notes + summary), `get_transcript` (word-for-word, paged). Point the server at a
+different data folder with `SCRIBE_DATA=/path/to/data`.
+
 ## How it works
 
 ```
