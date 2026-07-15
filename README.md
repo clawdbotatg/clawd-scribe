@@ -106,13 +106,13 @@ you've recorded** — transcripts with speaker names, your notes, and the genera
 It reads the same `data/meetings/` files directly, so it works even when the daemon is down,
 and nothing leaves your machine: the tools are read-only file access, not a network service.
 
-The easy way: hit **🔌 Connect Claude** at the bottom of the sidebar and copy the snippet
-for your Claude (it fills in the absolute paths for you). By hand:
+Two transports, same tools:
 
-```bash
-# Claude Code
-claude mcp add --scope user clawd-scribe -- node /path/to/clawd-scribe/mcp/server.js
-```
+- **HTTP (easiest)** — the daemon serves MCP at `http://localhost:3123/mcp`. One line,
+  no paths: `claude mcp add --scope user --transport http clawd-scribe http://localhost:3123/mcp`
+  — or add that URL as a custom connector in Claude Desktop. Needs the daemon running.
+- **stdio** — Claude spawns `mcp/server.js` directly, so your call history is readable
+  even when the daemon is down:
 
 ```json
 // Claude Desktop — ~/Library/Application Support/Claude/claude_desktop_config.json
@@ -121,6 +121,10 @@ claude mcp add --scope user clawd-scribe -- node /path/to/clawd-scribe/mcp/serve
   "command": "/opt/homebrew/bin/node",
   "args": ["/path/to/clawd-scribe/mcp/server.js"] } } }
 ```
+
+The easy way to get either: hit **🔌 Connect Claude** at the bottom of the sidebar — it
+fills in the URL and absolute paths for you, plus a paste-able skill for your agent's
+instructions.
 
 Tools: `search_meetings` (full-text across everything), `list_meetings`, `get_meeting`
 (notes + summary), `get_transcript` (word-for-word, paged). Point the server at a

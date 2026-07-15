@@ -413,59 +413,66 @@ $("diarizeBtn").onclick = async () => {
 };
 
 // --- connect Claude (MCP install snippets) ---
-const CLAUDE_SKILL = [
-  "# clawd-scribe — my recorded calls",
-  "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
-  "through the `clawd-scribe` MCP server. When I ask about a past call, meeting, or",
-  "conversation, use its tools:",
-  "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
-  "- `list_meetings(limit, offset)` — recent calls, newest first.",
-  "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
-  "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
-  '"Me" in transcripts is always me; other speakers are named when identified.',
-].join("\n");
-const SKILL_BLOCK = {
-  title: "Skill / instructions",
-  hint: "paste into your Claude agent's instructions / CLAUDE.md so it knows when to reach for these tools",
-  text: CLAUDE_SKILL,
-};
-
-function connectBlocks({ serverPath, nodePath }) {
-  const desktopConfig = JSON.stringify(
-    { mcpServers: { "clawd-scribe": { command: nodePath, args: [serverPath] } } },
-    null,
-    2
-  );
-  return [
-    {
-      title: "Claude Code",
-      hint: "run this once in any terminal",
-      text: `claude mcp add --scope user clawd-scribe -- ${sh(nodePath)} ${sh(serverPath)}`,
-    },
-    {
-      title: "Claude Desktop",
-      hint: "merge into ~/Library/Application Support/Claude/claude_desktop_config.json, then restart Claude Desktop",
-      text: desktopConfig,
-    },
-    SKILL_BLOCK,
-  ];
+function mcpUrl() {
+  return location.origin + "/mcp";
 }
-function sh(p) {
-  return /[^A-Za-z0-9_\/.-]/.test(p) ? `'${p.replace(/'/g, `'\\''`)}'` : p;
+function skillBlock() {
+  return {
+    title: "Skill / instructions",
+    hint: "paste into your Claude agent's instructions / CLAUDE.md — includes the endpoint so the agent knows where to connect",
+    text: [
+      "# clawd-scribe — my recorded calls",
+      "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
+      "through the `clawd-scribe` MCP server (Streamable HTTP at " + mcpUrl() + ").",
+      "If the tools aren't connected yet, register it once with:",
+      "`claude mcp add --scope user --transport http clawd-scribe " + mcpUrl() + "`",
+      "When I ask about a past call, meeting, or conversation, use its tools:",
+      "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
+      "- `list_meetings(limit, offset)` — recent calls, newest first.",
+      "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
+      "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
+      '"Me" in transcripts is always me; other speakers are named when identified.',
+    ].join("\n"),
+  };
+}
+function stdioBlock({ serverPath, nodePath }) {
+  return {
+    title: "stdio (works even when this daemon is down)",
+    hint: "merge into ~/Library/Application Support/Claude/claude_desktop_config.json, then restart Claude Desktop",
+    text: JSON.stringify(
+      { mcpServers: { "clawd-scribe": { command: nodePath, args: [serverPath] } } },
+      null,
+      2
+    ),
+  };
 }
 
 $("connectClaudeBtn").onclick = async () => {
   const wrap = $("connectBlocks");
   wrap.innerHTML = "";
-  let blocks;
+  const blocks = [
+    {
+      title: "Claude Code",
+      hint: "run once in any terminal — the daemon must be running when Claude uses the tools",
+      text: `claude mcp add --scope user --transport http clawd-scribe ${mcpUrl()}`,
+    },
+    {
+      title: "Claude Desktop — custom connector",
+      hint: "Settings → Connectors → Add custom connector, paste this URL",
+      text: mcpUrl(),
+    },
+  ];
   try {
-    blocks = connectBlocks(await api("GET", "mcp"));
+    blocks.push(stdioBlock(await api("GET", "mcp")));
   } catch {
-    // old daemon without /api/mcp: the install snippets need paths it can't give
-    // us, but the skill text is path-free — always offer it
-    wrap.innerHTML = `<p class="modal-intro">This daemon predates the MCP endpoint — restart clawd-scribe to get the install snippets. The skill below works regardless:</p>`;
-    blocks = [SKILL_BLOCK];
+    // pre-/api/mcp daemon: only the stdio snippet needs paths from the server
+    blocks.push({
+      title: "stdio (works even when this daemon is down)",
+      hint: "restart clawd-scribe to get this snippet with absolute paths filled in",
+      text: "(unavailable until the daemon is restarted — the URL options above still apply)",
+    });
   }
+  blocks.push(skillBlock());
   for (const b of blocks) {
     const div = document.createElement("div");
     div.className = "connect-block";

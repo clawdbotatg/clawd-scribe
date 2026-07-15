@@ -183,58 +183,58 @@ const HANDLERS = {
   },
 };
 
-// --- MCP stdio plumbing: newline-delimited JSON-RPC 2.0 ---
-function send(msg) {
-  process.stdout.write(JSON.stringify(msg) + "\n");
-}
-function reply(id, result) {
-  send({ jsonrpc: "2.0", id, result });
-}
-function replyError(id, code, message) {
-  send({ jsonrpc: "2.0", id, error: { code, message } });
-}
-
-function handle(msg) {
-  const { id, method, params } = msg;
+// --- JSON-RPC 2.0 core, transport-agnostic ---
+// Returns a response object, or null for notifications (nothing to send).
+// Used by the stdio loop below AND by the daemon's POST /mcp HTTP endpoint.
+function handleRpc(msg) {
+  const { id, method, params } = msg || {};
+  const respond = (result) => ({ jsonrpc: "2.0", id, result });
+  const fail = (code, message) => ({ jsonrpc: "2.0", id, error: { code, message } });
   if (method === "initialize") {
-    return reply(id, {
+    return respond({
       protocolVersion: (params && params.protocolVersion) || "2024-11-05",
       capabilities: { tools: {} },
       serverInfo: SERVER_INFO,
     });
   }
-  if (method === "notifications/initialized" || method === "notifications/cancelled") return;
-  if (method === "ping") return reply(id, {});
-  if (method === "tools/list") return reply(id, { tools: TOOLS });
+  if (!method || method.startsWith("notifications/")) return null;
+  if (method === "ping") return respond({});
+  if (method === "tools/list") return respond({ tools: TOOLS });
   if (method === "tools/call") {
     const name = params && params.name;
     const handler = HANDLERS[name];
-    if (!handler) return replyError(id, -32602, `unknown tool: ${name}`);
+    if (!handler) return fail(-32602, `unknown tool: ${name}`);
     try {
       const text = handler((params && params.arguments) || {});
-      return reply(id, { content: [{ type: "text", text }] });
+      return respond({ content: [{ type: "text", text }] });
     } catch (e) {
-      return reply(id, { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true });
+      return respond({ content: [{ type: "text", text: `Error: ${e.message}` }], isError: true });
     }
   }
-  if (id !== undefined) replyError(id, -32601, `method not found: ${method}`);
+  return id !== undefined ? fail(-32601, `method not found: ${method}`) : null;
 }
 
-let buf = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buf += chunk;
-  let nl;
-  while ((nl = buf.indexOf("\n")) !== -1) {
-    const line = buf.slice(0, nl).trim();
-    buf = buf.slice(nl + 1);
-    if (!line) continue;
-    try {
-      handle(JSON.parse(line));
-    } catch (e) {
-      console.error("[mcp] bad message:", e.message);
+module.exports = { TOOLS, HANDLERS, handleRpc, SERVER_INFO };
+
+// --- stdio transport: newline-delimited JSON-RPC when run directly ---
+if (require.main === module) {
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    let nl;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      try {
+        const resp = handleRpc(JSON.parse(line));
+        if (resp) process.stdout.write(JSON.stringify(resp) + "\n");
+      } catch (e) {
+        console.error("[mcp] bad message:", e.message);
+      }
     }
-  }
-});
-process.stdin.on("end", () => process.exit(0));
-console.error(`[mcp] clawd-scribe MCP server up — data: ${store.DATA_DIR}`);
+  });
+  process.stdin.on("end", () => process.exit(0));
+  console.error(`[mcp] clawd-scribe MCP server up — data: ${store.DATA_DIR}`);
+}

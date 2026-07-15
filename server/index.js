@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const { WebSocketServer } = require("ws");
 
 const store = require("./store");
+const mcp = require("../mcp/server");
 const configMod = require("./config");
 const { Recorder } = require("./recorder");
 const { generateNotes, suggestTitle } = require("./summarize");
@@ -323,6 +324,31 @@ const server = http.createServer(async (req, res) => {
   const parts = url.pathname.split("/").filter(Boolean);
 
   try {
+    // /mcp — MCP over Streamable HTTP (stateless): each POST carries JSON-RPC,
+    // answered as plain JSON. Lets any local MCP client connect by URL
+    // (`claude mcp add --transport http clawd-scribe http://localhost:3123/mcp`)
+    // instead of spawning mcp/server.js over stdio. Localhost-only like the
+    // rest of the daemon.
+    if (parts[0] === "mcp" && !parts[1]) {
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        const responses = (Array.isArray(body) ? body : [body]).map(mcp.handleRpc).filter(Boolean);
+        if (!responses.length) {
+          res.writeHead(202);
+          return res.end();
+        }
+        return json(res, 200, Array.isArray(body) ? responses : responses[0]);
+      }
+      // no server-initiated stream (GET) or session state (DELETE) — spec allows both
+      if (req.method === "GET") {
+        res.writeHead(405, { allow: "POST" });
+        return res.end();
+      }
+      if (req.method === "DELETE") {
+        res.writeHead(200);
+        return res.end();
+      }
+    }
     if (parts[0] === "api") {
       // GET /api/status
       if (req.method === "GET" && parts[1] === "status") {

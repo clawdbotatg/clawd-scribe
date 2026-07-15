@@ -83,6 +83,9 @@ function load() {
   // Persist so the user has a file to edit.
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2));
+  // PORT env overrides for this run only — applied after persisting so a
+  // temporary override never gets baked into config.json.
+  if (process.env.PORT) merged.port = Number(process.env.PORT);
   return merged;
 }
 
