@@ -413,23 +413,29 @@ $("diarizeBtn").onclick = async () => {
 };
 
 // --- connect Claude (MCP install snippets) ---
+const CLAUDE_SKILL = [
+  "# clawd-scribe — my recorded calls",
+  "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
+  "through the `clawd-scribe` MCP server. When I ask about a past call, meeting, or",
+  "conversation, use its tools:",
+  "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
+  "- `list_meetings(limit, offset)` — recent calls, newest first.",
+  "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
+  "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
+  '"Me" in transcripts is always me; other speakers are named when identified.',
+].join("\n");
+const SKILL_BLOCK = {
+  title: "Skill / instructions",
+  hint: "paste into your Claude agent's instructions / CLAUDE.md so it knows when to reach for these tools",
+  text: CLAUDE_SKILL,
+};
+
 function connectBlocks({ serverPath, nodePath }) {
   const desktopConfig = JSON.stringify(
     { mcpServers: { "clawd-scribe": { command: nodePath, args: [serverPath] } } },
     null,
     2
   );
-  const skill = [
-    "# clawd-scribe — my recorded calls",
-    "All my phone calls and meetings are recorded locally by clawd-scribe and exposed",
-    "through the `clawd-scribe` MCP server. When I ask about a past call, meeting, or",
-    "conversation, use its tools:",
-    "- `search_meetings(query)` — full-text search over titles, people, notes, summaries, transcripts. Start here.",
-    "- `list_meetings(limit, offset)` — recent calls, newest first.",
-    "- `get_meeting(id)` — one call's participants, my notes, and the generated summary.",
-    "- `get_transcript(id, offset)` — the word-for-word transcript (paged; only when exact wording matters).",
-    '"Me" in transcripts is always me; other speakers are named when identified.',
-  ].join("\n");
   return [
     {
       title: "Claude Code",
@@ -441,11 +447,7 @@ function connectBlocks({ serverPath, nodePath }) {
       hint: "merge into ~/Library/Application Support/Claude/claude_desktop_config.json, then restart Claude Desktop",
       text: desktopConfig,
     },
-    {
-      title: "Skill / instructions (optional)",
-      hint: "paste into your Claude project instructions or CLAUDE.md so it knows when to reach for these tools",
-      text: skill,
-    },
+    SKILL_BLOCK,
   ];
 }
 function sh(p) {
@@ -455,15 +457,16 @@ function sh(p) {
 $("connectClaudeBtn").onclick = async () => {
   const wrap = $("connectBlocks");
   wrap.innerHTML = "";
-  let info;
+  let blocks;
   try {
-    info = await api("GET", "mcp");
+    blocks = connectBlocks(await api("GET", "mcp"));
   } catch {
-    wrap.innerHTML = `<p class="modal-intro">This daemon predates the MCP endpoint — restart clawd-scribe (it self-updates on start) and try again.</p>`;
-    $("connectModal").classList.remove("hidden");
-    return;
+    // old daemon without /api/mcp: the install snippets need paths it can't give
+    // us, but the skill text is path-free — always offer it
+    wrap.innerHTML = `<p class="modal-intro">This daemon predates the MCP endpoint — restart clawd-scribe to get the install snippets. The skill below works regardless:</p>`;
+    blocks = [SKILL_BLOCK];
   }
-  for (const b of connectBlocks(info)) {
+  for (const b of blocks) {
     const div = document.createElement("div");
     div.className = "connect-block";
     div.innerHTML = `<div class="connect-head"><b>${esc(b.title)}</b><span class="hint">${esc(b.hint)}</span>
