@@ -147,6 +147,21 @@ function searchMeetings(query) {
         break;
       }
     }
+    // No exact-phrase hit: fall back to all-words-anywhere. "wallet delegation"
+    // should find a call where those words appear sentences apart.
+    const words = q.split(/\s+/).filter(Boolean);
+    if (!hit && words.length > 1) {
+      const everywhere = fields.map(([, t]) => t.toLowerCase()).join(" ");
+      if (words.every((w) => everywhere.includes(w))) {
+        for (const [where, text] of fields) {
+          const idx = text.toLowerCase().indexOf(words[0]);
+          if (idx !== -1) {
+            hit = { where, snippet: snippetAround(text, idx, words[0].length) };
+            break;
+          }
+        }
+      }
+    }
     if (hit) out.push({ ...meta, matchIn: hit.where, snippet: hit.snippet });
   }
   return out;

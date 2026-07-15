@@ -55,9 +55,10 @@ const TOOLS = [
     name: "search_meetings",
     description:
       "Full-text search across every recorded meeting/call — titles, speaker names, your notes, " +
-      "generated summaries, and the word-for-word transcripts. Case-insensitive substring match. " +
-      "Returns matching meetings with a snippet and, for transcript hits, the matching lines with " +
-      "timestamps. Use this first when looking for 'that call where we discussed X' or calls with a person.",
+      "generated summaries, and the word-for-word transcripts. Case-insensitive; matches the exact " +
+      "phrase or, failing that, meetings containing ALL the words anywhere. Returns matching meetings " +
+      "with a snippet and, for transcript hits, the matching lines with timestamps. Use this first " +
+      "when looking for 'that call where we discussed X' or calls with a person.",
     inputSchema: {
       type: "object",
       properties: { query: { type: "string", description: "word or phrase to search for" } },
@@ -112,19 +113,27 @@ const HANDLERS = {
     const hits = store.searchMeetings(q);
     if (!hits.length) return `No meetings match "${q}".`;
     const ql = q.toLowerCase();
+    const words = ql.split(/\s+/).filter(Boolean);
     const out = [`${hits.length} meeting(s) match "${q}":`, ""];
     for (const m of hits.slice(0, 20)) {
       out.push(metaLine(m));
       out.push(`  matched in ${m.matchIn}: ${m.snippet}`);
       if (m.matchIn === "transcript") {
         const segs = store.getTranscript(m.id);
-        const lines = [];
-        for (const s of segs) {
-          if (String(s.text || "").toLowerCase().includes(ql)) {
-            lines.push("  " + fmtLine(m, s));
-            if (lines.length >= 3) break;
+        // prefer lines with the phrase (or all words), fall back to any word
+        const pick = (test) => {
+          const lines = [];
+          for (const s of segs) {
+            const t = String(s.text || "").toLowerCase();
+            if (test(t)) {
+              lines.push("  " + fmtLine(m, s));
+              if (lines.length >= 3) break;
+            }
           }
-        }
+          return lines;
+        };
+        let lines = pick((t) => t.includes(ql) || (words.length > 1 && words.every((w) => t.includes(w))));
+        if (!lines.length) lines = pick((t) => words.some((w) => t.includes(w)));
         out.push(...lines);
       }
       out.push("");
