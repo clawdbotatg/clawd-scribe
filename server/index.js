@@ -1,5 +1,6 @@
 // clawd-scribe daemon — HTTP API + WebSocket + static web UI, all on localhost.
 const http = require("http");
+const os = require("os");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -492,8 +493,24 @@ process.on("SIGINT", async () => {
 });
 
 store.ensureDirs();
-server.listen(config.port, "127.0.0.1", () => {
+function lanAddresses() {
+  const nets = os.networkInterfaces();
+  const out = [];
+  for (const ifaces of Object.values(nets)) {
+    for (const net of ifaces || []) {
+      if (net.family === "IPv4" && !net.internal) out.push(net.address);
+    }
+  }
+  return out;
+}
+
+server.listen(config.port, config.host, () => {
   console.log(`clawd-scribe listening on http://localhost:${config.port}`);
+  if (config.host !== "127.0.0.1") {
+    for (const addr of lanAddresses()) {
+      console.log(`             on the LAN at http://${addr}:${config.port}`);
+    }
+  }
   console.log(`whisper model: ${config.whisperModel}`);
   console.log(`llm: ${config.llm.model} @ ${config.llm.url}`);
   resumeAfterRestart();

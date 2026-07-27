@@ -54,6 +54,44 @@ npm start
 
 Open **http://localhost:3123**, hit **● Record meeting**, and grant the two permissions macOS asks for (Screen Recording — that's how system audio capture works — and Microphone). The permissions attach to whatever launched the daemon (your terminal).
 
+The daemon also serves the **LAN** by default — the startup log prints a
+`http://<your-lan-ip>:3123` URL you can open from any machine on your network
+to read meetings (there's no auth, so anyone on the network can too; set
+`"host": "127.0.0.1"` in config to keep it this-machine-only).
+
+### Survive reboots + permission grants: launch it as an .app
+
+macOS ties the Screen Recording / Microphone grants to **whatever launched the
+daemon**. Launch from a terminal and the grants attach to that terminal app;
+launch `node` a different way later and macOS asks again (or silently records
+nothing). The fix is a tiny .app bundle that always launches it the same way:
+
+```bash
+mkdir -p "/Applications/Clawd Scribe.app/Contents/MacOS"
+cat > "/Applications/Clawd Scribe.app/Contents/MacOS/Clawd Scribe" <<'EOF'
+#!/bin/bash
+# Start the daemon if needed, then open the UI.
+PROJECT="$HOME/clawd-scribe"          # <- your checkout
+NODE="$(command -v node || echo /opt/homebrew/bin/node)"
+PORT=3123
+LOG="$HOME/Library/Logs/clawd-scribe.log"
+mkdir -p "$(dirname "$LOG")"
+if ! curl -s -o /dev/null "http://localhost:$PORT"; then
+  cd "$PROJECT" || exit 1
+  nohup "$NODE" server/index.js >> "$LOG" 2>&1 &
+  for i in $(seq 1 30); do
+    curl -s -o /dev/null "http://localhost:$PORT" && break; sleep 0.5
+  done
+fi
+open "http://localhost:$PORT"
+EOF
+chmod +x "/Applications/Clawd Scribe.app/Contents/MacOS/Clawd Scribe"
+```
+
+Grant the two permissions once when recording from an .app-launched daemon,
+and they stick across restarts. (Restarting after a code update = quit the
+`node` on port 3123, reopen the .app — the grants survive.)
+
 ## Usage
 
 1. Hit **Record** when your meeting starts. The live transcript appears within ~15 seconds, labeled **Me** (your mic) or **Them** (system audio).
@@ -72,6 +110,7 @@ Edit `data/config.json` (created on first run):
 ```jsonc
 {
   "port": 3123,
+  "host": "0.0.0.0",      // serve the LAN; "127.0.0.1" = this machine only
   "whisperBin": "whisper-cli",
   "whisperModel": "/path/to/ggml-small.en.bin",
   "whisperThreads": 4,
@@ -155,14 +194,14 @@ different data folder with `SCRIBE_DATA=/path/to/data`.
 
 The design goal is **CROPS** — censorship-resistant, open source, private, secure:
 
-- **No cloud, no accounts, no telemetry.** The only network call at runtime is to your own Ollama at `localhost:11434`. The daemon binds to `127.0.0.1` only.
+- **No cloud, no accounts, no telemetry.** The only network call at runtime is to your own Ollama at `localhost:11434`. The daemon serves your local network by default (`"host": "0.0.0.0"`) so other machines can read meetings — set `"host": "127.0.0.1"` to bind loopback only. It is never reachable from the internet unless you port-forward it yourself.
 - **Open source stack.** whisper.cpp (MIT), sherpa-onnx (Apache-2.0), Ollama (MIT), open-weight models (Whisper, pyannote, TitaNet, Qwen). The two closed-source pieces are Apple frameworks that run entirely on-device: ScreenCaptureKit (audio capture) and Vision (OCR).
 - **Your data is plain files.** Everything lives in `data/` — grep it, back it up, encrypt it, delete it. Nothing is hidden in a database or synced anywhere.
 - **Easy to audit.** ~2,400 lines total, two npm dependencies (`ws`, `sherpa-onnx-node`), no framework, no build step for the UI.
 
 External touchpoints are setup-time only: Homebrew, npm, and model downloads from Hugging Face / GitHub releases. After setup, clawd-scribe works fully offline.
 
-Known soft spots (PRs welcome): the localhost API has no auth token, meetings are not encrypted at rest (use FileVault), and it's macOS-only.
+Known soft spots (PRs welcome): the API has no auth token (anyone on your LAN can read meetings under the default `host` — bind `127.0.0.1` on networks you don't trust), meetings are not encrypted at rest (use FileVault), and it's macOS-only.
 
 ## License
 

@@ -29,6 +29,9 @@ function resolveWhisperBin() {
 
 const DEFAULTS = {
   port: 3123,
+  // Bind address. "0.0.0.0" serves the LAN (any machine on your network can
+  // read meetings — there is no auth); set "127.0.0.1" for this-machine-only.
+  host: "0.0.0.0",
   whisperBin: null, // resolved below if absent (see resolveWhisperBin)
   whisperModel: null, // resolved below if absent
   whisperThreads: 4,
@@ -86,6 +89,7 @@ function load() {
   // PORT env overrides for this run only — applied after persisting so a
   // temporary override never gets baked into config.json.
   if (process.env.PORT) merged.port = Number(process.env.PORT);
+  if (process.env.HOST) merged.host = process.env.HOST;
   return merged;
 }
 
