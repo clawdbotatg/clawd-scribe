@@ -414,7 +414,9 @@ $("diarizeBtn").onclick = async () => {
 
 // --- connect Claude: one paste that says where the server is and how to use it ---
 function connectPaste() {
-  const url = location.origin + "/mcp";
+  // Prefer the server's LAN address: a pasted snippet then works from ANY
+  // machine on the network, not just wherever location.origin says localhost.
+  const url = (state.lanUrl || location.origin) + "/mcp";
   return [
     "My recorded calls/meetings live in a local MCP server (clawd-scribe) at " + url,
     "",
@@ -577,6 +579,7 @@ function handleWS(msg) {
   connectWS();
   await refreshMeetings();
   const status = await api("GET", "status");
+  state.lanUrl = status.lanUrl || null;
   state.recording = status.recording;
   state.recordingMeetingId = status.meeting ? status.meeting.id : null;
   if (status.meeting) {

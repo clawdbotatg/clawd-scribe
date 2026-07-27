@@ -353,11 +353,16 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === "api") {
       // GET /api/status
       if (req.method === "GET" && parts[1] === "status") {
+        const lan = config.host !== "127.0.0.1" ? lanAddresses()[0] : null;
         return json(res, 200, {
           recording: !!recorder,
           meeting: activeMeeting,
           watcher: watcherStatus,
           generating: [...generating],
+          // Where OTHER machines reach this server — the connect-Claude snippet
+          // uses it so a pasted MCP URL works off-box (location.origin may say
+          // localhost). Null when bound loopback-only.
+          lanUrl: lan ? `http://${lan}:${config.port}` : null,
           config: { llm: config.llm, whisperModel: config.whisperModel },
         });
       }
