@@ -27,7 +27,41 @@ const UI_WORDS = new Set([
   "add comment", "feedback", "inbox", "older", "work", "very good",
   "very bad", "reducing noise", "return to home screen", "share v",
   "send a message", "in this call", "everyone", "no one",
+  // Meet's people-panel copy
+  "in the meeting", "meeting host", "contributors", "search for people",
+  "let participants send messages", "everyone invited has joined",
+  // generic browser/site chrome (seen when the meeting tab shares a window
+  // with other pages)
+  "home", "post", "profile", "view profile", "explore", "articles",
+  "bookmarks", "following", "followers", "notifications", "today",
+  "q search", "money", "news",
 ]);
+
+// Two roster keys are the same person when one is an OCR fragment or a
+// near-misread of the other ("ustin griffith", "christopher kocurel",
+// "marco del" for "marco de rossi").
+function isNameVariant(a, b) {
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (shorter.length < 6) return false;
+  if (longer.includes(shorter)) return true;
+  let p = 0;
+  while (p < shorter.length && shorter[p] === longer[p]) p++;
+  if (p >= Math.ceil(shorter.length * 0.8)) return true;
+  return levenshtein(a, b) <= (shorter.length >= 12 ? 2 : 1);
+}
+
+function levenshtein(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3; // caller only cares about ≤2
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
 
 // OCR reads the same display name slightly differently frame to frame
 // ("Sov", "SOV -", "Sov-"). Reduce each variant to a canonical key so the
@@ -35,6 +69,7 @@ const UI_WORDS = new Set([
 function normalizeName(s) {
   return s
     .trim()
+    .replace(/\s*\(you\)\s*$/i, "") // "Austin Griffith (You)" is the same person
     .replace(/[\s\-–—.,;:!?]+$/u, "") // trailing dashes/punct from tile edges
     .replace(/\s+/g, " ")
     .toLowerCase();
@@ -51,7 +86,11 @@ function looksLikeName(s) {
   // "Coltron (Coltron.eth)" — but never slashes, pipes, or long word runs.
   if (!/^[\p{L}][\p{L}\p{N}'’.()@\- ]*$/u.test(t)) return false;
   if ((t.match(/\p{L}/gu) || []).length < 2) return false;
-  if (t.split(/\s+/).length > 4) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 4) return false;
+  // sentence-case strings ("Let participants send messages") are UI copy —
+  // display names capitalize their later words too
+  if (words.length >= 3 && words.slice(1).every((w) => !/\p{Lu}/u.test(w))) return false;
   return true;
 }
 
@@ -125,7 +164,11 @@ class Watcher extends EventEmitter {
   onFrame(msg) {
     const t = (Date.now() - this.startTime) / 1000;
     if (msg.img) this.lastFrameJpg = Buffer.from(msg.img, "base64");
-    const names = (msg.texts || []).filter((x) => looksLikeName(x.s));
+    // In a browser window the top strip is tabs + URL bar + bookmarks, OCR'd
+    // every single frame ("Ethere", "Co" — truncated bookmark names outframe
+    // the actual participants). Tile name labels never live that high.
+    const topCut = /chrome|safari|firefox|arc|brave|edge/i.test(this.windowApp || "") ? 0.12 : 0.035;
+    const names = (msg.texts || []).filter((x) => x.y + x.h / 2 > topCut && looksLikeName(x.s));
     for (const n of names) {
       const key = normalizeName(n.s);
       this.roster.set(key, (this.roster.get(key) || 0) + 1);
@@ -206,6 +249,47 @@ class Watcher extends EventEmitter {
     this.emit("frame", entry);
   }
 
+  // Fold near-duplicate roster keys (OCR fragments and misreads) into the
+  // most-seen key for each person, merging counts, spellings, faces, and
+  // speaking samples. Idempotent; run before reading roster state.
+  dedupe() {
+    const keys = [...this.roster.keys()].sort((a, b) => this.roster.get(b) - this.roster.get(a));
+    const alias = new Map();
+    for (let i = 0; i < keys.length; i++) {
+      if (alias.has(keys[i])) continue;
+      for (let j = i + 1; j < keys.length; j++) {
+        if (!alias.has(keys[j]) && isNameVariant(keys[i], keys[j])) alias.set(keys[j], keys[i]);
+      }
+    }
+    for (const [from, to] of alias) {
+      this.roster.set(to, this.roster.get(to) + this.roster.get(from));
+      this.roster.delete(from);
+      const fromForms = this.nameForms.get(from);
+      if (fromForms) {
+        const toForms = this.nameForms.get(to) || new Map();
+        for (const [form, n] of fromForms) toForms.set(form, (toForms.get(form) || 0) + n);
+        this.nameForms.set(to, toForms);
+        this.nameForms.delete(from);
+      }
+      const face = this.faces.get(from);
+      if (face) {
+        const cur = this.faces.get(to);
+        if (!cur) this.faces.set(to, face);
+        else {
+          cur.votes += face.votes;
+          if (face.area > cur.area) {
+            cur.area = face.area;
+            cur.jpg = face.jpg;
+          }
+        }
+        this.faces.delete(from);
+      }
+    }
+    if (alias.size) {
+      for (const s of this.samples) if (alias.has(s.name)) s.name = alias.get(s.name);
+    }
+  }
+
   // Most-seen OCR spelling of a canonical roster key.
   displayForm(key) {
     const forms = [...(this.nameForms.get(key) || new Map()).entries()];
@@ -216,6 +300,7 @@ class Watcher extends EventEmitter {
   // Live state for the debug UI — everything stop() would eventually write,
   // plus raw counters, without touching disk.
   snapshot() {
+    this.dedupe();
     const roster = [...this.roster.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 40)
@@ -263,15 +348,24 @@ class Watcher extends EventEmitter {
       this.helper.kill("SIGTERM");
       this.helper = null;
     }
+    this.dedupe();
     // a real participant's tile is on screen for a sustained stretch; OCR
     // misreads and transient popups only rack up a handful of frames
     const maxFrames = Math.max(0, ...this.roster.values());
     const minFrames = Math.max(2, Math.min(30, Math.round(maxFrames * 0.02)));
+    const spoke = new Set(this.samples.map((s) => s.name));
     const roster = [...this.roster.entries()]
       .filter(([, frames]) => frames >= minFrames)
       // the meeting title is painted on screen too ("SPP3 Interview (JustaLab)")
-      // and racks up frames like a participant — drop keys the window title contains
-      .filter(([key]) => !(key.length >= 4 && this.windowTitle && normalizeName(this.windowTitle).includes(key)))
+      // and racks up frames like a participant — drop keys the window title
+      // contains, UNLESS the key showed tile evidence (a paired face or a
+      // speaking highlight): 1:1 call titles name the actual participants
+      .filter(
+        ([key]) =>
+          spoke.has(key) ||
+          ((this.faces.get(key) || {}).votes || 0) >= 3 ||
+          !(key.length >= 4 && this.windowTitle && normalizeName(this.windowTitle).includes(key))
+      )
       .sort((a, b) => b[1] - a[1])
       .map(([key, frames]) => ({ key, name: this.displayForm(key), frames }));
     // save the best face crop per rostered participant; a couple of votes
@@ -301,4 +395,4 @@ class Watcher extends EventEmitter {
   }
 }
 
-module.exports = { Watcher };
+module.exports = { Watcher, looksLikeName, normalizeName, isNameVariant };

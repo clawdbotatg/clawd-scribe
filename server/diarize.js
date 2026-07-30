@@ -76,6 +76,9 @@ function labelSegments(segments, turns) {
 // then speaker N is Tom Chen. Never overrides a name the user typed.
 function autoNameSpeakers(meta, turns, vision) {
   if (!vision || !vision.speaking || !vision.speaking.length) return {};
+  // only rostered participants are candidate names — the speaking timeline can
+  // carry transient OCR junk that never survived the roster filters
+  const rosterNames = new Set((vision.roster || []).map((r) => r.name.toLowerCase()));
   const votes = new Map(); // sid -> Map(name -> overlap seconds)
   for (const turn of turns) {
     const sid = turn.speaker + 1;
@@ -94,6 +97,7 @@ function autoNameSpeakers(meta, turns, vision) {
     const [name, sec] = ranked[0];
     const second = ranked[1] ? ranked[1][1] : 0;
     if (sec < 3 || sec < second * 1.5) continue; // not confident enough
+    if (rosterNames.size && !rosterNames.has(name.toLowerCase())) continue;
     const current = meta.speakers[sid];
     const isDefault = !current || /^Speaker \d+$/.test(current);
     const wasAuto = meta.autoNamed[sid] && meta.autoNamed[sid] === current;
@@ -135,6 +139,34 @@ async function diarizeMeeting(id, store, config) {
       console.error("[fusion]", e.message);
     }
   }
+
+  // Diarization sometimes splits one voice across clusters; when vision names
+  // several clusters after the same person they ARE the same person — fold
+  // them into whichever cluster talked the most so the UI shows one chip.
+  const byName = new Map();
+  for (const [sid, name] of Object.entries(autoNames)) {
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(Number(sid));
+  }
+  let relabeled = false;
+  for (const [, sids] of byName) {
+    if (sids.length < 2) continue;
+    const secs = new Map(sids.map((s) => [s, 0]));
+    for (const t of turns) {
+      const sid = t.speaker + 1;
+      if (secs.has(sid)) secs.set(sid, secs.get(sid) + (t.end - t.start));
+    }
+    sids.sort((a, b) => secs.get(b) - secs.get(a));
+    const keep = sids[0];
+    for (const drop of sids.slice(1)) {
+      for (const seg of segments) if (seg.speaker === drop) seg.speaker = keep;
+      delete meta.speakers[drop];
+      delete meta.autoNamed[drop];
+      delete autoNames[drop];
+      relabeled = true;
+    }
+  }
+  if (relabeled) store.writeText(id, "transcript.json", JSON.stringify(segments, null, 1));
 
   meta.diarizedAt = new Date().toISOString();
   store.saveMeta(meta);

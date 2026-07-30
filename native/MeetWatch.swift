@@ -62,6 +62,50 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
     private let GRID_W = 64
     private let GRID_H = 36
 
+    // Score candidates instead of substring-matching titles: "meet" must
+    // match as a whole word ("Google Meet" yes, "meeting notes" no), and
+    // windows owned by a real meeting app outrank browser tabs.
+    private let meetingApps = ["zoom.us", "microsoft teams", "webex", "cisco webex"]
+    private func windowScore(_ w: SCWindow) -> Int {
+        guard let title = w.title?.lowercased(), !title.isEmpty,
+              w.frame.width >= 320, w.frame.height >= 240 else { return 0 }
+        let app = (w.owningApplication?.applicationName ?? "").lowercased()
+        var s = 0
+        if meetingApps.contains(where: { app.contains($0) }) { s += 4 }
+        for p in opts.patterns {
+            let rx = "\\b" + NSRegularExpression.escapedPattern(for: p) + "\\b"
+            if title.range(of: rx, options: .regularExpression) != nil { s += 2; break }
+        }
+        return s
+    }
+
+    // A browser tab-switch swaps the page inside the same window, and SCK keeps
+    // streaming it — without this, the roster fills with OCR of whatever site
+    // the user browsed to mid-meeting. Recheck the title every few seconds and
+    // pause OCR while the window isn't showing the meeting.
+    private var paused = false
+    func startTitleLoop() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self = self else { return }
+            guard self.stream != nil else { return self.startTitleLoop() }
+            SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { [weak self] content, _ in
+                guard let self = self else { return }
+                if self.stream != nil,
+                   let w = (content?.windows ?? []).first(where: { $0.windowID == self.windowID }) {
+                    let showing = self.windowScore(w) >= 2
+                    if showing && self.paused {
+                        self.paused = false
+                        emit(["event": "watching", "title": w.title ?? "", "app": w.owningApplication?.applicationName ?? ""])
+                    } else if !showing && !self.paused {
+                        self.paused = true
+                        emit(["event": "lost"])
+                    }
+                }
+                self.startTitleLoop()
+            }
+        }
+    }
+
     func scan() {
         SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) {
             [weak self] content, error in
@@ -77,23 +121,7 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
                 emit(["event": "windows", "titles": titles])
             }
-            // Score candidates instead of substring-matching titles: "meet" must
-            // match as a whole word ("Google Meet" yes, "meeting notes" no), and
-            // windows owned by a real meeting app outrank browser tabs.
-            let meetingApps = ["zoom.us", "microsoft teams", "webex", "cisco webex"]
-            func score(_ w: SCWindow) -> Int {
-                guard let title = w.title?.lowercased(), !title.isEmpty,
-                      w.frame.width >= 320, w.frame.height >= 240 else { return 0 }
-                let app = (w.owningApplication?.applicationName ?? "").lowercased()
-                var s = 0
-                if meetingApps.contains(where: { app.contains($0) }) { s += 4 }
-                for p in opts.patterns {
-                    let rx = "\\b" + NSRegularExpression.escapedPattern(for: p) + "\\b"
-                    if title.range(of: rx, options: .regularExpression) != nil { s += 2; break }
-                }
-                return s
-            }
-            let candidates = (content?.windows ?? []).map { ($0, score($0)) }.filter { $0.1 >= 2 }
+            let candidates = (content?.windows ?? []).map { ($0, self.windowScore($0)) }.filter { $0.1 >= 2 }
             guard let (win, _) = candidates.max(by: {
                 ($0.1, $0.0.frame.width * $0.0.frame.height) < ($1.1, $1.0.frame.width * $1.0.frame.height)
             }) else {
@@ -136,6 +164,7 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
                 self?.rescanLater()
                 return
             }
+            self?.paused = false
             emit(["event": "watching", "title": win.title ?? "", "app": win.owningApplication?.applicationName ?? ""])
         }
     }
@@ -158,6 +187,7 @@ final class Watcher: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func process(_ pb: CVPixelBuffer) {
+        if paused { return }
         frameCount += 1
         let rects = highlightRects(pb)
         let texts = ocr(pb)
@@ -340,4 +370,5 @@ for sig in [SIGINT, SIGTERM] {
     _ = Unmanaged.passRetained(src)
 }
 watcher.scan()
+watcher.startTitleLoop()
 dispatchMain()
