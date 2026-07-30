@@ -49,15 +49,11 @@ function startRecording(title) {
   recorder.on("helperLog", (msg) => {
     console.error("[audiocap]", msg.event, msg.detail || "");
     if (msg.event === "warn") broadcast({ type: "recError", message: `capture warning: ${msg.detail}` });
+    if (msg.event === "retry") broadcast({ type: "recError", message: `audio capture hiccup — retrying automatically (${msg.detail})` });
   });
   recorder.on("dead", () =>
     handleCaptureDead(meeting).catch((e) => console.error("[watchdog]", e.message))
   );
-  recorder.on("helperExit", (code) => {
-    console.error("[audiocap] exited unexpectedly, code", code);
-    broadcast({ type: "recError", message: `audio capture exited (code ${code})` });
-    stopRecording().catch(() => {});
-  });
 
   recorder.start();
 
@@ -144,7 +140,7 @@ async function handleCaptureDead(meeting) {
     broadcast({
       type: "recError",
       message:
-        "no audio even after restarting twice — check Microphone and Screen & System Audio Recording in System Settings, then quit and reopen Clawd Scribe",
+        "no audio even after retrying and restarting — macOS has likely wedged the permission: System Settings → Privacy & Security → Screen & System Audio Recording, toggle Clawd Scribe OFF and back ON, then hit record again",
     });
     return;
   }

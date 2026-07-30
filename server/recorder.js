@@ -3,7 +3,7 @@
 // and transcribed independently, so every segment is attributed to "me" or
 // "them" with certainty. Chunks are cut at quiet points; whisper runs are
 // serialized across both streams.
-// Emits: level, segment, error, helperExit.
+// Emits: level, segment, error, dead, helperLog.
 const { spawn } = require("child_process");
 const { EventEmitter } = require("events");
 const fs = require("fs");
@@ -13,6 +13,10 @@ const { transcribeChunk, wavHeader } = require("./transcribe");
 const RATE = 16000;
 const BYTES_PER_SEC = RATE * 2; // per mono channel
 const ENV_FRAME = 160; // 10ms loudness-envelope frames for echo detection
+// SCStream.startCapture flakes transiently (device churn — e.g. AirPods
+// switching profiles right as a meeting starts), so a helper that dies is
+// respawned with backoff (~75s total) before capture is declared dead.
+const MAX_SPAWN_FAILS = 8;
 
 function envelopeOf(buf) {
   const frames = Math.floor(buf.length / 2 / ENV_FRAME);
@@ -125,6 +129,8 @@ class Recorder extends EventEmitter {
     this.pcmBytes = 0;
     this.watchdog = null;
     this.respawned = false;
+    this.spawnFails = 0;
+    this.retryTimer = null;
     this.startTime = Date.now();
     this.wavStream = null;
     this.wavBytes = 0;
@@ -166,8 +172,25 @@ class Recorder extends EventEmitter {
       }
     });
     this.helper.on("error", (e) => this.emit("error", e));
+    const bytesAtSpawn = this.pcmBytes;
     this.helper.on("close", (code) => {
-      if (!this.stopped) this.emit("helperExit", code);
+      if (this.stopped) return;
+      // A helper that captured audio and then died is a crash, not a start
+      // failure — reset the streak so mid-meeting respawns get fresh retries.
+      if (this.pcmBytes > bytesAtSpawn) this.spawnFails = 0;
+      this.spawnFails++;
+      if (this.spawnFails > MAX_SPAWN_FAILS) return this.emit("dead");
+      const delay = Math.min(1000 * 2 ** (this.spawnFails - 1), 15000);
+      this.emit("helperLog", {
+        event: "retry",
+        detail: `audiocap exited (code ${code}) — respawning in ${delay / 1000}s (${this.spawnFails}/${MAX_SPAWN_FAILS})`,
+      });
+      clearTimeout(this.watchdog);
+      this.retryTimer = setTimeout(() => {
+        if (this.stopped) return;
+        this.spawnHelper();
+        this.armWatchdog();
+      }, delay);
     });
   }
 
@@ -298,6 +321,7 @@ class Recorder extends EventEmitter {
   async stop() {
     this.stopped = true;
     clearTimeout(this.watchdog);
+    clearTimeout(this.retryTimer);
     if (this.helper) {
       this.helper.kill("SIGTERM");
       this.helper = null;
