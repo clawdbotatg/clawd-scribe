@@ -163,6 +163,15 @@ const HANDLERS = {
     ];
     const speakers = Object.entries(m.meta.speakers || {}).map(([k, v]) => `${k}=${v}`);
     if (speakers.length) out.push(`speakers: ${speakers.join(", ")}`);
+    const cal = m.meta.calendar;
+    if (cal) {
+      const who = (a) => (a.name && a.email ? `${a.name} <${a.email}>` : a.name || a.email || "?");
+      out.push(`calendar event: ${cal.title}${cal.organizer ? ` | organizer: ${who(cal.organizer)}` : ""}`);
+      if ((cal.attendees || []).length)
+        out.push(`invited: ${cal.attendees.map((a) => who(a) + (a.status === "declined" ? " (declined)" : "")).join(", ")}`);
+      const desc = (cal.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (desc) out.push(`invite description: ${desc.slice(0, 500)}`);
+    }
     out.push("");
     out.push("## My notes (typed during the call)", m.notes.trim() || "(none)", "");
     out.push("## Generated summary", m.summary.trim() || "(none — summary was never generated)", "");

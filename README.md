@@ -12,6 +12,7 @@ clawd-scribe records your Google Meet / Zoom / whatever calls **without a bot jo
 - 🔒 **100% local** — audio, transcripts, and summaries never touch a cloud
 - 👥 **Speaker identification** — your mic and the meeting audio are captured as separate channels, so *you* are always attributed correctly; remote voices are clustered into Speaker 1/2/3 with local diarization ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + pyannote segmentation + NeMo TitaNet embeddings) and you name them with one click
 - 👁 **Meeting-window vision** — while recording, clawd-scribe watches your Meet/Zoom window (ScreenCaptureKit + Apple's local Vision OCR, ~1fps): it reads participant names off the tiles and tracks the active-speaker highlight border, then fuses that timeline with the voice clusters to **auto-name speakers** — no clicking required when it's confident
+- 🗓 **Calendar-aware** — record during a calendar event and the recording names itself after it, pulling the invite's attendees and description in as context for the notes (via EventKit, so iCloud/Google/Exchange calendars all work — locally)
 - ✍️ **Granola-style notes** — type rough notes during the call; the LLM weaves them together with the transcript, attributing action items to the right people
 - 🔇 **Echo gate** — if you're on laptop speakers, mic chunks that are just the meeting audio leaking back in are detected by envelope cross-correlation and dropped
 - 📂 **Plain files** — every meeting is a folder of markdown + JSON + WAV you own
@@ -101,6 +102,8 @@ and they stick across restarts. (Restarting after a code update = quit the
 
 **Who is who?** Your voice never needs diarizing — it arrives on its own channel (your mic), so "Me" is ground truth. Only the remote side is clustered by voice. Names come from two places: the **vision watcher** (below) auto-fills them when it can, and the rename chips are the manual override. Names persist per meeting and flow into the generated notes.
 
+**The calendar knows what meeting this is.** If macOS Calendar has your calendars, hitting **Record** during (or up to 20 minutes before) a calendar event names the recording after that event automatically and attaches the invite's metadata — attendees, organizer, and description — to the meeting. The invitees show under the title, feed the notes LLM (correct name spellings, who's who, the intended agenda) and the ✨ Name button, and are exposed to Claude via MCP. A 🗓 hint under the Record button shows which event a new recording would pick up. It's a third tiny native helper (`native/calpeek`, EventKit): the first recording pops a macOS *"access your calendar"* prompt — allow it, and everything stays on your machine. **Google Calendar users:** sync it into macOS first — System Settings → Internet Accounts → add your Google account → enable **Calendars**. Typed a title yourself, or want it off? Your title always wins, and `"calendar": { "enabled": false }` in config disables the peek entirely.
+
 **The vision watcher.** While recording, a second native helper looks for a window whose title matches a meeting app (`meet`, `zoom`, `teams`, `webex` — configurable), captures one frame per second, OCRs it with Apple's on-device Vision framework, and finds the active-speaker border (Meet's blue / Zoom's green tile outline) by color clustering. That produces "Tom Chen's tile was highlighted from 4:10–4:25". After the meeting, voice cluster turns are matched against that timeline — consistent overlap means Speaker 2 *is* Tom Chen, and the chip is named automatically (your manual renames always win; ambiguous overlaps are left alone). Caveats: keep the meeting tab as the **active tab** of its browser window (its title is how the window is found — naturally true when you're in the call), and a 👁 badge in the sidebar shows which window is being watched. If the UI of Meet/Zoom changes their highlight colors, tweak `watcher.colors` in config. Everything is pixels-in, JSON-out on your machine — frames are never saved or uploaded.
 
 ## Configuration
@@ -123,6 +126,10 @@ Edit `data/config.json` (created on first run):
   "diarization": {
     "threshold": 1.1,     // lower = more speakers detected, higher = fewer
     "auto": true          // identify speakers automatically on stop
+  },
+  "calendar": {
+    "enabled": true,      // name recordings after the calendar event happening now
+    "lookaheadMin": 20    // an event starting this soon counts as "now"
   },
   "watcher": {
     "enabled": true,      // watch the meeting window during recording

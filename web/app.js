@@ -252,6 +252,50 @@ function renderVision() {
   el.innerHTML = html;
 }
 
+// --- calendar ---
+function fmtClock(iso) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+// sidebar hint: the calendar event a new recording would be named after
+async function refreshCalHint() {
+  const el = $("calHint");
+  if (state.recording) return el.classList.add("hidden");
+  try {
+    const { event } = await api("GET", "calendar/now");
+    if (!event) return el.classList.add("hidden");
+    const n = (event.attendees || []).length;
+    el.textContent =
+      `🗓 ${event.title} · ${fmtClock(event.startsAt)}–${fmtClock(event.endsAt)}` +
+      (n ? ` · ${n} invited` : "");
+    el.classList.remove("hidden");
+  } catch {
+    el.classList.add("hidden");
+  }
+}
+setInterval(refreshCalHint, 60000);
+
+// invite metadata attached to the open meeting
+function renderCalInfo() {
+  const el = $("calInfo");
+  const cal = state.current && state.current.meta.calendar;
+  el.classList.toggle("hidden", !cal);
+  if (!cal) return;
+  const who = (a) => a.name || a.email || "?";
+  const att = (cal.attendees || []).filter((a) => !a.me);
+  let html = `🗓 <b>${esc(cal.title)}</b> · ${fmtClock(cal.startsAt)}–${fmtClock(cal.endsAt)}`;
+  if (att.length) {
+    html += ` · invited: ` + att.map((a) =>
+      `<span class="cal-att${a.status === "declined" ? " declined" : ""}" title="${esc(a.email || "")}${a.status ? " · " + a.status : ""}">${esc(who(a))}</span>`
+    ).join(", ");
+  }
+  const desc = (cal.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (desc) {
+    html += ` <details class="cal-desc"><summary>description</summary><div>${esc(desc.slice(0, 1200))}</div></details>`;
+  }
+  el.innerHTML = html;
+}
+
 function showEmpty() {
   state.current = null;
   $("meeting").classList.add("hidden");
@@ -273,6 +317,7 @@ async function openMeeting(id) {
   renderTranscript();
   renderSpeakers();
   renderVision();
+  renderCalInfo();
   renderSummary();
   renderMeetingList();
 }
@@ -329,6 +374,7 @@ $("stopBtn").onclick = async () => {
 function updateRecUI() {
   $("recordBtn").classList.toggle("hidden", state.recording);
   $("recState").classList.toggle("hidden", !state.recording);
+  refreshCalHint();
   if (state.current) {
     $("liveBadge").classList.toggle(
       "hidden",
@@ -516,7 +562,11 @@ function handleWS(msg) {
       if (state.current && state.current.meta.id === msg.meetingId) {
         state.current.meta.title = msg.title;
         $("title").value = msg.title;
-        toast(`Auto-named “${msg.title}”`, true);
+        if (msg.calendar) {
+          state.current.meta.calendar = msg.calendar;
+          renderCalInfo();
+        }
+        toast(msg.calendar ? `🗓 From your calendar: “${msg.title}”` : `Auto-named “${msg.title}”`, true);
       }
       refreshMeetings();
       break;

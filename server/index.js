@@ -13,6 +13,7 @@ const { Recorder } = require("./recorder");
 const { generateNotes, suggestTitle } = require("./summarize");
 const { diarizeMeeting, modelsAvailable } = require("./diarize");
 const { Watcher } = require("./watcher");
+const calendar = require("./calendar");
 
 const config = configMod.load();
 const WEB_DIR = path.join(__dirname, "..", "web");
@@ -69,7 +70,39 @@ function startRecording(title) {
   }
 
   broadcast({ type: "status", recording: true, meeting });
+  // untitled recording → ask the calendar what meeting this is. Async so a
+  // slow peek (the first-ever run blocks on the macOS permission dialog)
+  // never delays audio capture; the title lands via the normal titleUpdated
+  // broadcast a moment later.
+  if (isGenericTitle(meeting.title) && calendar.available()) {
+    applyCalendarEvent(meeting.id).catch((e) => console.error("[calendar]", e.message));
+  }
   return meeting;
+}
+
+// Name a just-started meeting after the calendar event happening now, and
+// stash the invite's metadata (attendees, organizer, description) in its meta
+// so the notes/title LLMs and the MCP tools can use it.
+async function applyCalendarEvent(meetingId) {
+  const ev = await calendar.currentEvent(config);
+  if (!ev) return;
+  let meta;
+  try {
+    meta = store.getMeta(meetingId);
+  } catch {
+    return; // meeting vanished while we peeked
+  }
+  meta.calendar = calendar.metaFromEvent(ev);
+  // don't clobber a title the user typed in the meantime
+  if (isGenericTitle(meta.title)) meta.title = ev.title;
+  store.saveMeta(meta);
+  if (activeMeeting && activeMeeting.id === meetingId) {
+    activeMeeting.title = meta.title;
+    activeMeeting.calendar = meta.calendar;
+  }
+  const n = (meta.calendar.attendees || []).length;
+  console.error(`[calendar] matched "${ev.title}"${n ? ` (${n} invited)` : ""}`);
+  broadcast({ type: "titleUpdated", meetingId, title: meta.title, calendar: meta.calendar });
 }
 
 async function stopRecording() {
@@ -221,6 +254,7 @@ async function runGenerate(id) {
         userNotes: m.notes,
         title: m.meta.title,
         speakers: m.meta.speakers || {},
+        calendar: m.meta.calendar || null,
       },
       config,
       (tok) => broadcast({ type: "notesToken", meetingId: id, token: tok })
@@ -256,7 +290,10 @@ async function runRetitle(id) {
     const rosterNames = ((m.vision && m.vision.roster) || [])
       .map((r) => r.name)
       .filter(Boolean);
-    const participants = [...new Set([...namedSpeakers, ...rosterNames])];
+    const calNames = (((m.meta.calendar || {}).attendees) || [])
+      .filter((a) => !a.me && a.status !== "declined" && a.name)
+      .map((a) => a.name.trim());
+    const participants = [...new Set([...namedSpeakers, ...rosterNames, ...calNames])];
     const title = await suggestTitle(
       { transcript: m.transcript, userNotes: m.notes, speakers, participants },
       config
@@ -371,6 +408,17 @@ const server = http.createServer(async (req, res) => {
         if (!watcher || !watcher.lastFrameJpg) return json(res, 404, { error: "no frame" });
         res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store" });
         return res.end(watcher.lastFrameJpg);
+      }
+      // GET /api/calendar/now — the calendar event happening (or about to),
+      // so the UI can show what a new recording would be named after.
+      if (req.method === "GET" && parts[1] === "calendar" && parts[2] === "now") {
+        if (!calendar.available()) return json(res, 200, { available: false, event: null });
+        try {
+          const events = await calendar.fetchEvents(config);
+          return json(res, 200, { available: true, event: calendar.pickCurrent(events) });
+        } catch (e) {
+          return json(res, 200, { available: true, event: null, error: e.message });
+        }
       }
       // POST /api/record/start  { title }
       if (req.method === "POST" && parts[1] === "record" && parts[2] === "start") {

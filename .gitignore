@@ -2,4 +2,5 @@ node_modules/
 data/
 native/audiocap
 native/meetwatch
+native/calpeek
 .DS_Store

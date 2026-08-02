@@ -14,6 +14,10 @@ Rules:
   then "## Decisions" (omit if none), then "## Action Items" as a checklist with
   owners when identifiable (omit if none).
 - Be specific: names, numbers, dates, and commitments from the transcript.
+- A calendar invite (attendees, event description) may be included — use it for
+  correct name spellings and context about who is who, but the transcript is what
+  actually happened: don't assume every invitee attended or that agenda items
+  from the description were discussed.
 - Do not invent content that is not supported by the transcript or notes.
 - The transcript may contain recognition errors; silently correct obvious ones.
 - Output only the Markdown notes, no preamble.`;
@@ -28,7 +32,28 @@ function speakerLabel(seg, speakers) {
   return seg.who ? "Them" : "";
 }
 
-async function generateNotes({ transcript, userNotes, title, speakers = {} }, config, onToken) {
+// One readable line per invitee: "Jane Doe <jane@x.com> (declined)".
+function attendeeLine(a) {
+  let s = a.name && a.email ? `${a.name} <${a.email}>` : a.name || a.email || "?";
+  if (a.me) s += " (me)";
+  if (a.status === "declined" || a.status === "tentative") s += ` (${a.status})`;
+  return s;
+}
+
+// The invite as prompt context. Google Meet descriptions are often HTML blobs
+// full of join-info boilerplate — strip tags and cap the length.
+function calendarBlock(cal) {
+  if (!cal) return "";
+  const lines = [`Calendar invite:`, `- Event: ${cal.title}`];
+  if (cal.organizer) lines.push(`- Organizer: ${attendeeLine(cal.organizer)}`);
+  const att = cal.attendees || [];
+  if (att.length) lines.push(`- Invited: ${att.map(attendeeLine).join(", ")}`);
+  const desc = (cal.description || "").replace(/<[^>]+>/g, " ").replace(/[ \t]+/g, " ").trim();
+  if (desc) lines.push(`- Description: ${desc.slice(0, 1200)}`);
+  return lines.join("\n") + "\n\n";
+}
+
+async function generateNotes({ transcript, userNotes, title, speakers = {}, calendar = null }, config, onToken) {
   const transcriptText = transcript
     .map((s) => {
       const label = speakerLabel(s, speakers);
@@ -37,6 +62,7 @@ async function generateNotes({ transcript, userNotes, title, speakers = {} }, co
     .join("\n");
 
   let user = `Meeting title: ${title}\n\n`;
+  user += calendarBlock(calendar);
   if (userNotes && userNotes.trim()) {
     user += `My rough notes:\n${userNotes.trim()}\n\n`;
   }

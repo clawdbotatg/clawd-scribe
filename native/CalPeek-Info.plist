@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.clawd.scribe.calpeek</string>
+  <key>CFBundleName</key>
+  <string>calpeek</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>clawd-scribe reads your calendar to name a recording after the meeting you are in and attach the invite's attendees and description to your notes. Nothing leaves this machine.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>clawd-scribe reads your calendar to name a recording after the meeting you are in and attach the invite's attendees and description to your notes. Nothing leaves this machine.</string>
+</dict>
+</plist>

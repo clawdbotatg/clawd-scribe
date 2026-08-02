@@ -14,6 +14,7 @@
       <span class="tagline">local meeting notes · <a class="debug-link" href="/debug.html" target="_blank">vision debug</a></span>
     </div>
     <button id="recordBtn" class="record">● Record meeting</button>
+    <div id="calHint" class="hidden" title="From your calendar — a new recording will be named after this event"></div>
     <div id="recState" class="hidden">
       <div class="rec-row">
         <span class="rec-dot"></span>
@@ -58,6 +59,7 @@
           <button id="nameBtn" title="Name this meeting by who's in it (AI)">✨ Name</button>
         </div>
         <div id="meetingMeta"></div>
+        <div id="calInfo" class="hidden"></div>
       </header>
 
       <div id="columns">

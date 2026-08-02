@@ -54,6 +54,12 @@ const DEFAULTS = {
     minDurationOff: 0.5,
     auto: true, // run automatically when a recording stops
   },
+  calendar: {
+    enabled: true, // name recordings after the calendar event happening now
+    lookbackMin: 240, // how far back to look for a still-running event
+    lookaheadMin: 20, // an event starting this soon counts as "now"
+    timeoutSec: 25, // the first-ever peek blocks on the macOS permission dialog
+  },
   watcher: {
     enabled: true, // watch the meeting window for names + active speaker
     patterns: ["meet", "zoom", "teams", "webex"],
@@ -79,6 +85,7 @@ function load() {
     ...cfg,
     llm: { ...DEFAULTS.llm, ...(cfg.llm || {}) },
     diarization: { ...DEFAULTS.diarization, ...(cfg.diarization || {}) },
+    calendar: { ...DEFAULTS.calendar, ...(cfg.calendar || {}) },
     watcher: { ...DEFAULTS.watcher, ...(cfg.watcher || {}) },
   };
   if (!merged.whisperModel) merged.whisperModel = findWhisperModel();
