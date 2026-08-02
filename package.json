@@ -9,6 +9,7 @@
     "build:native": "swiftc -O -o native/audiocap native/AudioCapture.swift && swiftc -O -o native/meetwatch native/MeetWatch.swift && swiftc -O -o native/calpeek native/CalPeek.swift -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker native/CalPeek-Info.plist"
   },
   "dependencies": {
+    "playwright-core": "^1.62.1",
     "sherpa-onnx-node": "^1.13.2",
     "ws": "^8.18.0"
   }

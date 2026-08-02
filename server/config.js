@@ -56,9 +56,21 @@ const DEFAULTS = {
   },
   calendar: {
     enabled: true, // name recordings after the calendar event happening now
+    // "gcal" = read calendar.google.com through a cloned logged-in Chrome
+    // profile (tools/gcal-clone.sh once, then tools/gcal-peek.mjs);
+    // "eventkit" = macOS Calendar via native/calpeek;
+    // "auto" = gcal if the cloned profile exists, else eventkit.
+    source: "auto",
     lookbackMin: 240, // how far back to look for a still-running event
     lookaheadMin: 20, // an event starting this soon counts as "now"
-    timeoutSec: 25, // the first-ever peek blocks on the macOS permission dialog
+    timeoutSec: 25, // eventkit: first-ever peek blocks on the macOS permission dialog
+    cacheSec: 45, // events cache — the UI hint polls every minute
+    gcal: {
+      port: 9333, // CDP port for the headless profile clone
+      profileDir: null, // default: data/gcal-profile
+      binary: null, // default: /Applications/Google Chrome.app/...
+      timeoutSec: 90, // first peek launches headless Chrome
+    },
   },
   watcher: {
     enabled: true, // watch the meeting window for names + active speaker
@@ -85,7 +97,11 @@ function load() {
     ...cfg,
     llm: { ...DEFAULTS.llm, ...(cfg.llm || {}) },
     diarization: { ...DEFAULTS.diarization, ...(cfg.diarization || {}) },
-    calendar: { ...DEFAULTS.calendar, ...(cfg.calendar || {}) },
+    calendar: {
+      ...DEFAULTS.calendar,
+      ...(cfg.calendar || {}),
+      gcal: { ...DEFAULTS.calendar.gcal, ...((cfg.calendar || {}).gcal || {}) },
+    },
     watcher: { ...DEFAULTS.watcher, ...(cfg.watcher || {}) },
   };
   if (!merged.whisperModel) merged.whisperModel = findWhisperModel();

@@ -74,7 +74,7 @@ function startRecording(title) {
   // slow peek (the first-ever run blocks on the macOS permission dialog)
   // never delays audio capture; the title lands via the normal titleUpdated
   // broadcast a moment later.
-  if (isGenericTitle(meeting.title) && calendar.available()) {
+  if (isGenericTitle(meeting.title) && calendar.available(config)) {
     applyCalendarEvent(meeting.id).catch((e) => console.error("[calendar]", e.message));
   }
   return meeting;
@@ -84,7 +84,9 @@ function startRecording(title) {
 // stash the invite's metadata (attendees, organizer, description) in its meta
 // so the notes/title LLMs and the MCP tools can use it.
 async function applyCalendarEvent(meetingId) {
-  const ev = await calendar.currentEvent(config);
+  // fresh: skip the hint-poll cache — it may predate the meeting's start and
+  // carry the picked event without its attendees/description enrichment
+  const ev = await calendar.currentEvent(config, { fresh: true });
   if (!ev) return;
   let meta;
   try {
@@ -412,10 +414,11 @@ const server = http.createServer(async (req, res) => {
       // GET /api/calendar/now — the calendar event happening (or about to),
       // so the UI can show what a new recording would be named after.
       if (req.method === "GET" && parts[1] === "calendar" && parts[2] === "now") {
-        if (!calendar.available()) return json(res, 200, { available: false, event: null });
+        if (!calendar.available(config)) return json(res, 200, { available: false, event: null });
         try {
           const events = await calendar.fetchEvents(config);
-          return json(res, 200, { available: true, event: calendar.pickCurrent(events) });
+          const event = calendar.pickCurrent(events, Date.now(), (config.calendar.lookaheadMin || 20) * 60e3);
+          return json(res, 200, { available: true, event });
         } catch (e) {
           return json(res, 200, { available: true, event: null, error: e.message });
         }
