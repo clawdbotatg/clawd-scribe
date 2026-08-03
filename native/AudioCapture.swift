@@ -50,7 +50,7 @@ final class StreamConverter {
         if frames <= 0 { return [] }
         if !loggedFormat {
             loggedFormat = true
-            logErr("format", "\(debugTag): rate=\(asbd.mSampleRate) ch=\(asbd.mChannelsPerFrame) flags=\(asbd.mFormatFlags)")
+            logErr("format", "\(debugTag): rate=\(asbd.mSampleRate) ch=\(asbd.mChannelsPerFrame) bits=\(asbd.mBitsPerChannel) flags=\(asbd.mFormatFlags)")
         }
 
         // Pull the AudioBufferList out of the sample buffer.
@@ -91,6 +91,7 @@ final class StreamConverter {
     private func downmix(_ abl: UnsafeMutableAudioBufferListPointer,
                          asbd: AudioStreamBasicDescription, frames: Int) -> [Float] {
         let isFloat = asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        let bits = Int(asbd.mBitsPerChannel)
 
         func floats(_ buf: AudioBuffer) -> [Float] {
             guard let data = buf.mData else { return [] }
@@ -98,7 +99,27 @@ final class StreamConverter {
                 let n = Int(buf.mDataByteSize) / 4
                 let p = data.assumingMemoryBound(to: Float.self)
                 return Array(UnsafeBufferPointer(start: p, count: n))
-            } else {
+            }
+            // Integer PCM comes in several widths (the Yeti X delivers 32-bit;
+            // reading that as int16 turns speech into constant white noise).
+            switch bits {
+            case 32:
+                let n = Int(buf.mDataByteSize) / 4
+                let p = data.assumingMemoryBound(to: Int32.self)
+                return UnsafeBufferPointer(start: p, count: n).map { Float($0) / 2147483648 }
+            case 24:
+                // packed little-endian 3-byte samples
+                let n = Int(buf.mDataByteSize) / 3
+                let p = data.assumingMemoryBound(to: UInt8.self)
+                var out = [Float](repeating: 0, count: n)
+                for i in 0..<n {
+                    let b0 = Int32(p[i * 3]), b1 = Int32(p[i * 3 + 1]), b2 = Int32(p[i * 3 + 2])
+                    var v = (b2 << 16) | (b1 << 8) | b0
+                    if v & 0x0080_0000 != 0 { v |= ~0x00FF_FFFF } // sign-extend
+                    out[i] = Float(v) / 8388608
+                }
+                return out
+            default:
                 let n = Int(buf.mDataByteSize) / 2
                 let p = data.assumingMemoryBound(to: Int16.self)
                 return UnsafeBufferPointer(start: p, count: n).map { Float($0) / 32768 }
