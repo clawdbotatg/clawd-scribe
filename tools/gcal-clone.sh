@@ -28,11 +28,19 @@ pkill -f -- "--user-data-dir=$DST" 2>/dev/null && sleep 1 || true
 echo "Cloning '$APP / $SRC_PROFILE' -> $DST (skipping caches)..."
 rm -rf "$DST"
 mkdir -p "$DST/Default"
+# The source profile belongs to a live Chrome: files vanish/rotate mid-copy
+# (leveldb logs especially). rsync reports those as exit 23/24 — fine for us;
+# only a real failure (can't read the profile at all, disk full, …) is fatal.
+rc=0
 rsync -a \
   --exclude 'Service Worker' --exclude 'GPUCache' --exclude 'DawnWebGPUCache' \
   --exclude 'DawnGraphiteCache' --exclude 'Code Cache' --exclude 'Cache' \
   --exclude 'Application Cache' --exclude 'CacheStorage' \
-  "$SRC/" "$DST/Default/"
+  "$SRC/" "$DST/Default/" || rc=$?
+case $rc in
+  0|23|24) ;;
+  *) echo "rsync failed (exit $rc)" >&2; exit "$rc" ;;
+esac
 echo "  clone size: $(du -sh "$DST" | cut -f1)"
 if [ -e "$DST/Default/Cookies" ] || [ -e "$DST/Default/Network/Cookies" ]; then
   echo "  cookies: present"
