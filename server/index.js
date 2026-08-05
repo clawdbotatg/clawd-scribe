@@ -10,7 +10,7 @@ const store = require("./store");
 const mcp = require("../mcp/server");
 const configMod = require("./config");
 const { Recorder } = require("./recorder");
-const { generateNotes, suggestTitle } = require("./summarize");
+const { generateNotes } = require("./summarize");
 const { diarizeMeeting, modelsAvailable } = require("./diarize");
 const { Watcher } = require("./watcher");
 const calendar = require("./calendar");
@@ -70,41 +70,7 @@ function startRecording(title) {
   }
 
   broadcast({ type: "status", recording: true, meeting });
-  // untitled recording → ask the calendar what meeting this is. Async so a
-  // slow peek (the first-ever run blocks on the macOS permission dialog)
-  // never delays audio capture; the title lands via the normal titleUpdated
-  // broadcast a moment later.
-  if (isGenericTitle(meeting.title) && calendar.available(config)) {
-    applyCalendarEvent(meeting.id).catch((e) => console.error("[calendar]", e.message));
-  }
   return meeting;
-}
-
-// Name a just-started meeting after the calendar event happening now, and
-// stash the invite's metadata (attendees, organizer, description) in its meta
-// so the notes/title LLMs and the MCP tools can use it.
-async function applyCalendarEvent(meetingId) {
-  // fresh: skip the hint-poll cache — it may predate the meeting's start and
-  // carry the picked event without its attendees/description enrichment
-  const ev = await calendar.currentEvent(config, { fresh: true });
-  if (!ev) return;
-  let meta;
-  try {
-    meta = store.getMeta(meetingId);
-  } catch {
-    return; // meeting vanished while we peeked
-  }
-  meta.calendar = calendar.metaFromEvent(ev);
-  // don't clobber a title the user typed in the meantime
-  if (isGenericTitle(meta.title)) meta.title = ev.title;
-  store.saveMeta(meta);
-  if (activeMeeting && activeMeeting.id === meetingId) {
-    activeMeeting.title = meta.title;
-    activeMeeting.calendar = meta.calendar;
-  }
-  const n = (meta.calendar.attendees || []).length;
-  console.error(`[calendar] matched "${ev.title}"${n ? ` (${n} invited)` : ""}`);
-  broadcast({ type: "titleUpdated", meetingId, title: meta.title, calendar: meta.calendar });
 }
 
 async function stopRecording() {
@@ -134,17 +100,13 @@ async function stopRecording() {
   const willDiarize = config.diarization.auto && config.keepAudio && modelsAvailable(config);
   if (config.diarization.auto && config.keepAudio) {
     if (willDiarize) {
-      // retitle runs *after* diarization so it has named speakers + roster to work with
       runDiarize(meta.id).catch((e) => console.error("[diarize]", e.message));
     } else {
       console.error("[diarize] skipped — models not found at configured paths (see data/config.json)");
     }
   }
-  // auto-name the meeting if the user never gave it a real title; when diarization
-  // is running, autoRetitle() is triggered from runDiarize once names are known.
-  if (!willDiarize && isGenericTitle(meta.title) && store.getTranscript(meta.id).length) {
-    runRetitle(meta.id).catch((e) => console.error("[retitle]", e.message));
-  }
+  // Titles are manual-only: the name the user types is never generated,
+  // suggested, or overwritten by anything.
   return meta;
 }
 
@@ -228,11 +190,6 @@ async function runDiarize(id) {
       speakerCount: result.speakerCount,
       autoNames: result.autoNames || {},
     });
-    // now that speakers are named, auto-name the meeting if still untitled
-    const meta = store.getMeta(id);
-    if (isGenericTitle(meta.title) && store.getTranscript(id).length) {
-      runRetitle(id).catch((e) => console.error("[retitle]", e.message));
-    }
   } catch (e) {
     broadcast({ type: "diarizeError", meetingId: id, message: e.message });
     throw e;
@@ -268,46 +225,6 @@ async function runGenerate(id) {
     throw e;
   } finally {
     generating.delete(id);
-  }
-}
-
-// --- AI title naming ---
-const retitling = new Set();
-// A title is "generic" if the user never named it — the default is "Meeting <date>".
-function isGenericTitle(title) {
-  return !title || /^meeting\b/i.test(title.trim());
-}
-async function runRetitle(id) {
-  if (retitling.has(id)) throw new Error("already naming this meeting");
-  const m = store.getMeeting(id);
-  if (!m.transcript.length && !m.notes.trim()) throw new Error("nothing to name yet");
-  retitling.add(id);
-  try {
-    // who is this meeting with? named speakers (skip generic "Speaker N") + faces
-    // read off the meeting window by the vision watcher.
-    const speakers = m.meta.speakers || {};
-    const namedSpeakers = Object.entries(speakers)
-      .filter(([k, v]) => k !== "me" && v && !/^speaker\s*\d+$/i.test(v.trim()))
-      .map(([, v]) => v.trim());
-    const rosterNames = ((m.vision && m.vision.roster) || [])
-      .map((r) => r.name)
-      .filter(Boolean);
-    const calNames = (((m.meta.calendar || {}).attendees) || [])
-      .filter((a) => !a.me && a.status !== "declined" && a.name)
-      .map((a) => a.name.trim());
-    const participants = [...new Set([...namedSpeakers, ...rosterNames, ...calNames])];
-    const title = await suggestTitle(
-      { transcript: m.transcript, userNotes: m.notes, speakers, participants },
-      config
-    );
-    if (!title) throw new Error("model returned an empty title");
-    const meta = store.getMeta(id);
-    meta.title = title;
-    store.saveMeta(meta);
-    broadcast({ type: "titleUpdated", meetingId: id, title });
-    return title;
-  } finally {
-    retitling.delete(id);
   }
 }
 
@@ -481,10 +398,6 @@ const server = http.createServer(async (req, res) => {
         if (req.method === "POST" && parts[3] === "generate") {
           runGenerate(id).catch((e) => console.error("[generate]", e.message));
           return json(res, 202, { ok: true });
-        }
-        // POST /api/meetings/:id/retitle — AI-name the meeting from its transcript
-        if (req.method === "POST" && parts[3] === "retitle") {
-          return json(res, 200, { title: await runRetitle(id) });
         }
         // POST /api/meetings/:id/diarize
         if (req.method === "POST" && parts[3] === "diarize") {

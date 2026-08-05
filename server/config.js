@@ -38,7 +38,9 @@ const DEFAULTS = {
   // Any OpenAI-compatible or Ollama endpoint works here. Local by default.
   llm: {
     url: "http://localhost:11434",
-    model: "qwen3.6:35b-a3b-q4_K_M",
+    // Must fit in RAM alongside OBS + Chrome — a 35B model here wired all
+    // 24 GB and swap-thrashed the whole machine (2026-08-05).
+    model: "qwen3:4b",
   },
   keepAudio: true,
   chunkSeconds: 12,

@@ -257,25 +257,8 @@ function fmtClock(iso) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-// sidebar hint: the calendar event a new recording would be named after
-async function refreshCalHint() {
-  const el = $("calHint");
-  if (state.recording) return el.classList.add("hidden");
-  try {
-    const { event } = await api("GET", "calendar/now");
-    if (!event) return el.classList.add("hidden");
-    const n = (event.attendees || []).length;
-    el.textContent =
-      `🗓 ${event.title} · ${fmtClock(event.startsAt)}–${fmtClock(event.endsAt)}` +
-      (n ? ` · ${n} invited` : "");
-    el.classList.remove("hidden");
-  } catch {
-    el.classList.add("hidden");
-  }
-}
-setInterval(refreshCalHint, 60000);
-
-// invite metadata attached to the open meeting
+// invite metadata attached to the open meeting (older recordings only —
+// titles and metadata are no longer pulled from the calendar)
 function renderCalInfo() {
   const el = $("calInfo");
   const cal = state.current && state.current.meta.calendar;
@@ -374,7 +357,6 @@ $("stopBtn").onclick = async () => {
 function updateRecUI() {
   $("recordBtn").classList.toggle("hidden", state.recording);
   $("recState").classList.toggle("hidden", !state.recording);
-  refreshCalHint();
   if (state.current) {
     $("liveBadge").classList.toggle(
       "hidden",
@@ -410,26 +392,6 @@ $("title").addEventListener("change", async () => {
   await api("PUT", `meetings/${state.current.meta.id}/title`, { title: $("title").value });
   await refreshMeetings();
 });
-
-// --- AI name the meeting ---
-$("nameBtn").onclick = async () => {
-  if (!state.current) return;
-  const btn = $("nameBtn");
-  btn.disabled = true;
-  btn.textContent = "naming…";
-  try {
-    const { title } = await api("POST", `meetings/${state.current.meta.id}/retitle`);
-    $("title").value = title;
-    state.current.meta.title = title;
-    await refreshMeetings();
-    toast(`Named “${title}”`, true);
-  } catch (e) {
-    toast("Naming failed: " + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "✨ Name";
-  }
-};
 
 // --- search box ---
 $("search").addEventListener("input", () => {
@@ -557,18 +519,6 @@ function handleWS(msg) {
       $("diarizeBtn").disabled = false;
       $("diarizeBtn").textContent = "👥 Identify speakers";
       toast("Speaker identification failed: " + msg.message);
-      break;
-    case "titleUpdated":
-      if (state.current && state.current.meta.id === msg.meetingId) {
-        state.current.meta.title = msg.title;
-        $("title").value = msg.title;
-        if (msg.calendar) {
-          state.current.meta.calendar = msg.calendar;
-          renderCalInfo();
-        }
-        toast(msg.calendar ? `🗓 From your calendar: “${msg.title}”` : `Auto-named “${msg.title}”`, true);
-      }
-      refreshMeetings();
       break;
     case "speakersUpdated":
       if (state.current && state.current.meta.id === msg.meetingId) {
