@@ -219,6 +219,19 @@ function renderSummary() {
     : '<p style="color:var(--dim)">No notes yet — record or type notes, then hit Generate.</p>';
 }
 
+function renderShots() {
+  const el = $("shots");
+  const v = state.current && state.current.vision;
+  const shots = (v && v.shots) || [];
+  el.classList.toggle("hidden", !shots.length);
+  el.innerHTML = shots
+    .map((s) => {
+      const src = `/api/meetings/${state.current.meta.id}/${s.file}`;
+      return `<a class="shot" href="${src}" target="_blank"><img src="${src}" alt="" loading="lazy" /><span>${fmtTime(s.t)}</span></a>`;
+    })
+    .join("");
+}
+
 function rosterFace(name) {
   const v = state.current && state.current.vision;
   const entry = v && (v.roster || []).find((r) => r.face && r.name === name);
@@ -302,6 +315,7 @@ async function openMeeting(id) {
   renderVision();
   renderCalInfo();
   renderSummary();
+  renderShots();
   renderMeetingList();
 }
 

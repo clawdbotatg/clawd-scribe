@@ -380,6 +380,10 @@ const server = http.createServer(async (req, res) => {
         if (req.method === "GET" && parts[3] === "faces" && /^\d+\.jpg$/.test(parts[4] || "")) {
           return serveStatic(res, path.join(store.meetingDir(id), "faces", parts[4]));
         }
+        // GET /api/meetings/:id/shots/<n>.jpg
+        if (req.method === "GET" && parts[3] === "shots" && /^\d+\.jpg$/.test(parts[4] || "")) {
+          return serveStatic(res, path.join(store.meetingDir(id), "shots", parts[4]));
+        }
         // PUT /api/meetings/:id/notes  { notes }
         if (req.method === "PUT" && parts[3] === "notes") {
           const body = await readBody(req);

@@ -124,6 +124,13 @@ class Watcher extends EventEmitter {
     this.stats = { frames: 0, namedFrames: 0, rectFrames: 0, faceFrames: 0, lastFrameAt: 0 };
     this.recent = [];
     this.lastFrameJpg = null; // latest full-frame capture, served at /api/watcher/frame.jpg
+    // Evenly-spread full-frame snapshots, written as shots/<n>.jpg on stop()
+    // and shown under the generated notes. Bounded reservoir: when it fills,
+    // drop every other shot and double the interval, so a 20-minute call and
+    // a 3-hour call both end with a handful of well-spaced frames.
+    this.shots = []; // {t (sec rel), jpg (Buffer)}
+    this.shotInterval = 45; // also the wait before the first shot — skips the join screen
+    this.lastShotT = 0;
   }
 
   static binPath() {
@@ -163,7 +170,17 @@ class Watcher extends EventEmitter {
 
   onFrame(msg) {
     const t = (Date.now() - this.startTime) / 1000;
-    if (msg.img) this.lastFrameJpg = Buffer.from(msg.img, "base64");
+    if (msg.img) {
+      this.lastFrameJpg = Buffer.from(msg.img, "base64");
+      if (t - this.lastShotT >= this.shotInterval) {
+        this.shots.push({ t, jpg: this.lastFrameJpg });
+        this.lastShotT = t;
+        if (this.shots.length > 12) {
+          this.shots = this.shots.filter((_, i) => i % 2 === 1);
+          this.shotInterval *= 2;
+        }
+      }
+    }
     // In a browser window the top strip is tabs + URL bar + bookmarks, OCR'd
     // every single frame ("Ethere", "Co" — truncated bookmark names outframe
     // the actual participants). Tile name labels never live that high.
@@ -381,10 +398,27 @@ class Watcher extends EventEmitter {
       entry.face = file;
     }
     for (const entry of roster) delete entry.key;
+    // up to 5 snapshots, evenly spread across what the reservoir kept
+    const shots = [];
+    if (this.shots.length) {
+      const want = Math.min(5, this.shots.length);
+      const picked = new Set();
+      for (let i = 0; i < want; i++) {
+        picked.add(Math.round((i * (this.shots.length - 1)) / Math.max(1, want - 1)));
+      }
+      fs.mkdirSync(path.join(dir, "shots"), { recursive: true });
+      let n = 0;
+      for (const idx of [...picked].sort((a, b) => a - b)) {
+        const file = `shots/${n++}.jpg`;
+        fs.writeFileSync(path.join(dir, file), this.shots[idx].jpg);
+        shots.push({ t: Math.round(this.shots[idx].t), file });
+      }
+    }
     const vision = {
       windowTitle: this.windowTitle,
       windowApp: this.windowApp || null,
       roster,
+      shots,
       speaking: this.buildTimeline().map((iv) => ({ ...iv, name: this.displayForm(iv.name) })),
     };
     fs.writeFileSync(
