@@ -227,7 +227,7 @@ function renderShots() {
   el.innerHTML = shots
     .map((s) => {
       const src = `/api/meetings/${state.current.meta.id}/${s.file}`;
-      return `<a class="shot" href="${src}" target="_blank"><img src="${src}" alt="" loading="lazy" /><span>${fmtTime(s.t)}</span></a>`;
+      return `<a class="shot" href="${src}" target="_blank"><img src="${src}" alt="" loading="lazy" /><span>${s.manual ? "📸 " : ""}${fmtTime(s.t)}</span></a>`;
     })
     .join("");
 }
@@ -371,6 +371,7 @@ $("stopBtn").onclick = async () => {
 function updateRecUI() {
   $("recordBtn").classList.toggle("hidden", state.recording);
   $("recState").classList.toggle("hidden", !state.recording);
+  $("shotBtn").classList.toggle("hidden", !state.recording);
   if (state.current) {
     $("liveBadge").classList.toggle(
       "hidden",
@@ -378,6 +379,20 @@ function updateRecUI() {
     );
   }
 }
+
+// --- manual snapshot (📸 button, visible while recording) ---
+$("shotBtn").onclick = async () => {
+  const btn = $("shotBtn");
+  try {
+    const shot = await api("POST", "watcher/shot");
+    btn.classList.remove("snap");
+    void btn.offsetWidth; // restart the animation on rapid clicks
+    btn.classList.add("snap");
+    toast(`📸 snapshot saved at ${fmtTime(shot.t)} — shows up under the notes after you stop`, true);
+  } catch (e) {
+    toast("Snapshot failed: " + e.message);
+  }
+};
 
 setInterval(() => {
   if (state.recording && state.recStart) {

@@ -328,6 +328,14 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store" });
         return res.end(watcher.lastFrameJpg);
       }
+      // POST /api/watcher/shot — manual snapshot (the 📸 button): pin the
+      // latest captured frame so it's always saved with the meeting's shots
+      if (req.method === "POST" && parts[1] === "watcher" && parts[2] === "shot") {
+        if (!watcher) return json(res, 409, { error: "not watching a meeting window" });
+        const shot = watcher.takeShot();
+        if (!shot) return json(res, 409, { error: "no frame captured yet — is a meeting window visible?" });
+        return json(res, 200, shot);
+      }
       // GET /api/calendar/now — the calendar event happening (or about to),
       // so the UI can show what a new recording would be named after.
       if (req.method === "GET" && parts[1] === "calendar" && parts[2] === "now") {

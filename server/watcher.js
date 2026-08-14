@@ -175,8 +175,11 @@ class Watcher extends EventEmitter {
       if (t - this.lastShotT >= this.shotInterval) {
         this.shots.push({ t, jpg: this.lastFrameJpg });
         this.lastShotT = t;
-        if (this.shots.length > 12) {
-          this.shots = this.shots.filter((_, i) => i % 2 === 1);
+        // thin only the automatic shots — manual 📸 shots are pinned
+        const auto = this.shots.filter((s) => !s.manual);
+        if (auto.length > 12) {
+          const drop = new Set(auto.filter((_, i) => i % 2 === 0));
+          this.shots = this.shots.filter((s) => !drop.has(s));
           this.shotInterval *= 2;
         }
       }
@@ -264,6 +267,17 @@ class Watcher extends EventEmitter {
     this.recent.push(entry);
     if (this.recent.length > 20) this.recent.shift();
     this.emit("frame", entry);
+  }
+
+  // Manual snapshot (the 📸 button): pin the latest captured frame. Pinned
+  // shots survive reservoir thinning and are all written on stop(), on top of
+  // the evenly-spread automatic picks. Returns null before the first frame.
+  takeShot() {
+    if (!this.lastFrameJpg) return null;
+    const t = (Date.now() - this.startTime) / 1000;
+    this.shots.push({ t, jpg: this.lastFrameJpg, manual: true });
+    this.lastShotT = t; // this moment is covered — push the next auto shot out
+    return { t: Math.round(t) };
   }
 
   // Fold near-duplicate roster keys (OCR fragments and misreads) into the
@@ -398,20 +412,27 @@ class Watcher extends EventEmitter {
       entry.face = file;
     }
     for (const entry of roster) delete entry.key;
-    // up to 5 snapshots, evenly spread across what the reservoir kept
+    // every manual 📸 shot, plus up to 5 automatic snapshots evenly spread
+    // across what the reservoir kept
     const shots = [];
-    if (this.shots.length) {
-      const want = Math.min(5, this.shots.length);
+    const auto = this.shots.filter((s) => !s.manual);
+    const keep = this.shots.filter((s) => s.manual);
+    if (auto.length) {
+      const want = Math.min(5, auto.length);
       const picked = new Set();
       for (let i = 0; i < want; i++) {
-        picked.add(Math.round((i * (this.shots.length - 1)) / Math.max(1, want - 1)));
+        picked.add(Math.round((i * (auto.length - 1)) / Math.max(1, want - 1)));
       }
+      for (const idx of picked) keep.push(auto[idx]);
+    }
+    keep.sort((a, b) => a.t - b.t);
+    if (keep.length) {
       fs.mkdirSync(path.join(dir, "shots"), { recursive: true });
       let n = 0;
-      for (const idx of [...picked].sort((a, b) => a - b)) {
+      for (const s of keep) {
         const file = `shots/${n++}.jpg`;
-        fs.writeFileSync(path.join(dir, file), this.shots[idx].jpg);
-        shots.push({ t: Math.round(this.shots[idx].t), file });
+        fs.writeFileSync(path.join(dir, file), s.jpg);
+        shots.push({ t: Math.round(s.t), file, ...(s.manual ? { manual: true } : {}) });
       }
     }
     const vision = {

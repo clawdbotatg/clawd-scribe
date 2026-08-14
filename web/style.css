@@ -258,8 +258,24 @@ button.record:hover { filter: brightness(1.1); }
 .markdown p { margin: 6px 0; }
 .markdown code { background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
 
+/* manual-snapshot button, visible while recording */
+#shotBtn {
+  position: fixed; bottom: 18px; right: 18px; z-index: 40;
+  width: 52px; height: 52px; border-radius: 50%;
+  font-size: 22px; line-height: 1; cursor: pointer;
+  background: var(--bg); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px rgba(80, 40, 20, 0.2);
+  transition: transform 0.15s;
+}
+#shotBtn:hover { border-color: var(--accent); }
+#shotBtn.snap { animation: snapflash 0.35s; }
+@keyframes snapflash {
+  30% { transform: scale(0.82); }
+  100% { transform: scale(1); }
+}
+
 #toast {
-  position: fixed; bottom: 18px; right: 18px;
+  position: fixed; bottom: 80px; right: 18px;
   background: var(--red); color: #fff;
   padding: 10px 16px; border-radius: 8px;
   max-width: 380px; font-size: 13px;
