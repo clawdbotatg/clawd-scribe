@@ -14,6 +14,7 @@ const { generateNotes } = require("./summarize");
 const { diarizeMeeting, modelsAvailable } = require("./diarize");
 const { Watcher } = require("./watcher");
 const calendar = require("./calendar");
+const preflight = require("./preflight");
 
 const config = configMod.load();
 const WEB_DIR = path.join(__dirname, "..", "web");
@@ -22,6 +23,9 @@ let recorder = null; // active Recorder or null
 let watcher = null; // active Watcher or null
 let watcherStatus = null; // last watcher status, so reloads can re-show the badge
 let activeMeeting = null;
+let captureDead = null; // { since, reason } while capture is known broken
+let healTimer = null;
+let lastPreflightAt = 0;
 
 // --- WebSocket broadcast ---
 let wss;
@@ -42,7 +46,10 @@ function startRecording(title) {
   recorder.on("segment", (segment) =>
     broadcast({ type: "segment", meetingId: meeting.id, segment })
   );
-  recorder.on("level", (rms) => broadcast({ type: "level", rms }));
+  recorder.on("level", (rms) => {
+    markCaptureAlive(); // real PCM flowing is the ground-truth heal signal
+    broadcast({ type: "level", rms });
+  });
   recorder.on("error", (e) => {
     console.error("[recorder]", e.message);
     broadcast({ type: "recError", message: e.message });
@@ -127,18 +134,68 @@ function readResumeMarker() {
   return null;
 }
 
+// --- dead-capture state: alarm loudly, retest every minute until healed ---
+// Only a human can un-wedge the TCC grant, so the daemon's job is (1) make
+// sure they find out NOW — on-screen dialog + notification + the exact
+// Settings pane opened — and (2) confirm the fix the moment it lands.
+function enterDeadState(reason) {
+  if (!captureDead) captureDead = { since: new Date().toISOString(), reason };
+  broadcast({ type: "recError", message: `AUDIO CAPTURE IS DEAD — ${reason} Fix: ${preflight.FIX_STEPS}` });
+  broadcast({ type: "captureDead", ...captureDead });
+  preflight.raiseAlarm(config, reason);
+  if (!healTimer) {
+    healTimer = setInterval(async () => {
+      if (recorder) return; // never run a probe under a live recording
+      const r = await preflight.probeCapture();
+      if (r.ok) markCaptureAlive();
+    }, 60e3);
+  }
+}
+
+function markCaptureAlive() {
+  if (healTimer) {
+    clearInterval(healTimer);
+    healTimer = null;
+  }
+  if (!captureDead) return;
+  captureDead = null;
+  preflight.clearAlarm();
+  preflight.notifyHealed();
+  console.error("[preflight] capture healed — audio is flowing again");
+  broadcast({ type: "captureDead", healed: true });
+  broadcast({ type: "recError", message: "audio capture healed — recordings work again" });
+}
+
+// A recording killed by dead capture holds nothing (44-byte WAV header, empty
+// transcript, no user notes) — delete it so a wedged grant can't litter the
+// meeting list with dozens of empty folders like the 2026-08-17 loop did.
+function discardIfEmpty(meetingId) {
+  try {
+    const m = store.getMeeting(meetingId);
+    if ((m.transcript || []).length) return false;
+    if ((m.notes || "").trim()) return false;
+    const wav = path.join(store.meetingDir(meetingId), "audio.wav");
+    if (fs.existsSync(wav) && fs.statSync(wav).size > 20000) return false; // >~0.3s of audio
+    store.deleteMeeting(meetingId);
+    console.error(`[watchdog] discarded empty dead recording ${meetingId}`);
+    broadcast({ type: "meetingDiscarded", meetingId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function handleCaptureDead(meeting) {
   const attempts = (readResumeMarker() || {}).attempts || 0;
   console.error(`[watchdog] audio capture dead, restart attempt ${attempts + 1}`);
   const title = meeting.title;
   await stopRecording();
+  discardIfEmpty(meeting.id);
   if (attempts >= MAX_CAPTURE_RESTARTS) {
     try { fs.unlinkSync(RESUME_PATH); } catch {}
-    broadcast({
-      type: "recError",
-      message:
-        "no audio even after retrying and restarting — macOS has likely wedged the permission: System Settings → Privacy & Security → Screen & System Audio Recording, toggle Clawd Scribe OFF and back ON, then hit record again",
-    });
+    enterDeadState(
+      `Recording "${title}" got no audio even after retrying and restarting — macOS has likely wedged the screen-recording permission.`
+    );
     return;
   }
   broadcast({
@@ -310,6 +367,7 @@ const server = http.createServer(async (req, res) => {
           recording: !!recorder,
           meeting: activeMeeting,
           watcher: watcherStatus,
+          captureDead,
           generating: [...generating],
           // Where OTHER machines reach this server — the connect-Claude snippet
           // uses it so a pasted MCP URL works off-box (location.origin may say
@@ -460,6 +518,7 @@ wss.on("connection", (sock) => {
       recording: !!recorder,
       meeting: activeMeeting,
       watcher: watcherStatus,
+      captureDead,
     })
   );
 });
@@ -491,4 +550,49 @@ server.listen(config.port, config.host, () => {
   console.log(`whisper model: ${config.whisperModel}`);
   console.log(`llm: ${config.llm.model} @ ${config.llm.url}`);
   resumeAfterRestart();
+
+  // Boot self-test: the 2026-08-17 incident started with a reboot that wedged
+  // the grant overnight — catch that hours before the first meeting, not
+  // 6 seconds into it. Skipped when a resume is in flight (the resumed
+  // recording's own watchdog is the test).
+  setTimeout(async () => {
+    if (config.alerts.preflight === false) return;
+    if (recorder || readResumeMarker()) return;
+    lastPreflightAt = Date.now();
+    const r = await preflight.probeCapture();
+    if (r.ok) {
+      console.error(`[preflight] boot capture self-test OK (${r.bytes} bytes)`);
+      markCaptureAlive();
+    } else {
+      enterDeadState(
+        `Startup self-test got no audio from the capture helper (${r.error || "no bytes"}). Recordings will NOT work until this is fixed.`
+      );
+    }
+  }, 3000);
+
+  // Pre-meeting self-test: when a calendar event is imminent and capture is
+  // untested lately, probe now — the alarm should fire BEFORE the call starts.
+  setInterval(async () => {
+    if (config.alerts.preflight === false) return;
+    if (recorder || captureDead) return; // dead state already alarms + retests
+    if (!calendar.available(config)) return;
+    if (Date.now() - lastPreflightAt < 10 * 60e3) return;
+    let ev;
+    try {
+      const lookaheadMs = (config.alerts.preflightLookaheadMin || 15) * 60e3;
+      ev = calendar.pickCurrent(await calendar.fetchEvents(config), Date.now(), lookaheadMs);
+    } catch {
+      return;
+    }
+    if (!ev) return;
+    lastPreflightAt = Date.now();
+    const r = await preflight.probeCapture();
+    if (r.ok) {
+      console.error(`[preflight] pre-meeting capture self-test OK ("${ev.title}")`);
+    } else {
+      enterDeadState(
+        `"${ev.title}" is starting and audio capture is DEAD (${r.error || "no bytes"}).`
+      );
+    }
+  }, 5 * 60e3);
 });

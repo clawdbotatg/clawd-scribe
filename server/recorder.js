@@ -156,7 +156,7 @@ class Recorder extends EventEmitter {
   }
 
   spawnHelper() {
-    const bin = path.join(__dirname, "..", "native", "audiocap");
+    const bin = process.env.AUDIOCAP_BIN || path.join(__dirname, "..", "native", "audiocap");
     this.helper = spawn(bin, [], { stdio: ["ignore", "pipe", "pipe"] });
 
     this.helper.stdout.on("data", (data) => this.onPCM(data));

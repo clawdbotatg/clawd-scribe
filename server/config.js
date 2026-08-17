@@ -74,6 +74,14 @@ const DEFAULTS = {
       timeoutSec: 90, // first peek launches headless Chrome
     },
   },
+  alerts: {
+    enabled: true, // on-screen alarm (notification + dialog) when capture is dead
+    dialog: true, // modal dialog too, not just a notification
+    cooldownMin: 10, // minimum minutes between alarms
+    preflight: true, // capture self-test at boot and before calendar events
+    preflightLookaheadMin: 15, // test when an event starts within this window
+    command: null, // optional shell hook on alarm; gets $SCRIBE_ALERT_REASON
+  },
   watcher: {
     enabled: true, // watch the meeting window for names + active speaker
     patterns: ["meet", "zoom", "teams", "webex"],
@@ -104,6 +112,7 @@ function load() {
       ...(cfg.calendar || {}),
       gcal: { ...DEFAULTS.calendar.gcal, ...((cfg.calendar || {}).gcal || {}) },
     },
+    alerts: { ...DEFAULTS.alerts, ...(cfg.alerts || {}) },
     watcher: { ...DEFAULTS.watcher, ...(cfg.watcher || {}) },
   };
   if (!merged.whisperModel) merged.whisperModel = findWhisperModel();
