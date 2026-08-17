@@ -325,6 +325,56 @@ async function refreshMeetings() {
   else renderMeetingList();
 }
 
+// --- capture permission (the big orange button) ---
+// Shown whenever the daemon says capture is dead. Click = the daemon opens
+// the exact Settings pane on the Mac and re-probes (macOS shows its own
+// permission prompt if the grant is missing entirely). The daemon keeps
+// retesting every minute; the button flips green the moment audio flows.
+function renderPermBtn() {
+  const btn = $("permBtn");
+  if (state.captureHealed) {
+    btn.classList.remove("hidden", "waiting");
+    btn.classList.add("healed");
+    btn.textContent = "✅ Recording permission OK";
+    clearTimeout(renderPermBtn._t);
+    renderPermBtn._t = setTimeout(() => {
+      state.captureHealed = false;
+      renderPermBtn();
+    }, 5000);
+    return;
+  }
+  btn.classList.remove("healed");
+  btn.classList.toggle("hidden", !state.captureDead);
+  if (!state.captureDead) return;
+  btn.title = state.captureDead.reason || "";
+  if (state.permFixing) {
+    btn.classList.add("waiting");
+    btn.textContent = "⏳ Settings opened on the Mac — toggle Clawd Scribe OFF, then ON. Retesting…";
+  } else {
+    btn.classList.remove("waiting");
+    btn.textContent = "⚠️ NO RECORDING PERMISSION — CLICK TO FIX";
+  }
+}
+
+$("permBtn").onclick = async () => {
+  if (state.permFixing || state.captureHealed) return;
+  state.permFixing = true;
+  renderPermBtn();
+  try {
+    const r = await api("POST", "capture/fix");
+    if (r.ok) {
+      state.captureDead = null;
+      state.captureHealed = true;
+    } else {
+      toast("Still no audio — in the Settings window on the Mac, toggle Clawd Scribe OFF and back ON. I retest every minute.");
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+  state.permFixing = false;
+  renderPermBtn();
+};
+
 // --- recording controls ---
 $("recordBtn").onclick = async () => {
   try {
@@ -507,6 +557,20 @@ function handleWS(msg) {
       }
       updateRecUI();
       if (msg.watcher) handleWS({ type: "watcher", ...msg.watcher });
+      if ("captureDead" in msg) {
+        state.captureDead = msg.captureDead;
+        renderPermBtn();
+      }
+      break;
+    case "captureDead":
+      if (msg.healed) {
+        state.captureDead = null;
+        state.captureHealed = true;
+      } else {
+        state.captureDead = { since: msg.since, reason: msg.reason };
+        state.captureHealed = false;
+      }
+      renderPermBtn();
       break;
     case "level":
       $("levelBar").style.width = Math.min(100, msg.rms * 350) + "%";
@@ -610,6 +674,8 @@ function handleWS(msg) {
   const status = await api("GET", "status");
   state.lanUrl = status.lanUrl || null;
   state.recording = status.recording;
+  state.captureDead = status.captureDead || null;
+  renderPermBtn();
   state.recordingMeetingId = status.meeting ? status.meeting.id : null;
   if (status.meeting) {
     state.recStart = new Date(status.meeting.startedAt).getTime();

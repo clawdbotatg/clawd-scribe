@@ -406,6 +406,23 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { available: true, event: null, error: e.message });
         }
       }
+      // POST /api/capture/fix — the big orange button. Opens the Screen &
+      // System Audio Recording pane on the Mac and runs a capture probe
+      // (which also makes macOS show its own permission prompt when the
+      // grant is missing entirely, not just wedged). Granting itself is
+      // human-only — Apple allows no programmatic path — so this does
+      // everything short of the toggle and reports the truth.
+      if (req.method === "POST" && parts[1] === "capture" && parts[2] === "fix") {
+        if (recorder) return json(res, 200, { ok: true, recording: true });
+        spawn("open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"], {
+          detached: true,
+          stdio: "ignore",
+        }).unref();
+        const r = await preflight.probeCapture();
+        if (r.ok) markCaptureAlive();
+        else if (!captureDead) enterDeadState(`Capture test failed (${r.error || "no bytes"}).`);
+        return json(res, 200, { ok: r.ok, bytes: r.bytes, error: r.error });
+      }
       // POST /api/record/start  { title }
       if (req.method === "POST" && parts[1] === "record" && parts[2] === "start") {
         const body = await readBody(req);

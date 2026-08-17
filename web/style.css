@@ -56,6 +56,20 @@ button:hover { border-color: var(--dim); }
 button.record { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
 button.record:hover { filter: brightness(1.1); }
 
+/* the big orange no-permission button: unmissable while capture is dead */
+#permBtn {
+  background: #e8710a; border-color: #e8710a; color: #fff;
+  font-weight: 700; font-size: 14px; padding: 14px 12px; text-align: left;
+  animation: permPulse 1.3s ease-in-out infinite;
+}
+#permBtn:hover { filter: brightness(1.08); border-color: #e8710a; }
+#permBtn.waiting { animation: none; background: #b45309; border-color: #b45309; }
+#permBtn.healed { animation: none; background: var(--green); border-color: var(--green); }
+@keyframes permPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 113, 10, 0.65); }
+  50% { box-shadow: 0 0 0 12px rgba(232, 113, 10, 0); }
+}
+
 #recState { display: flex; flex-direction: column; gap: 8px; }
 .rec-row { display: flex; align-items: center; gap: 8px; }
 .rec-dot {
