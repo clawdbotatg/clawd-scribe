@@ -6,6 +6,10 @@
 
 ![status](https://img.shields.io/badge/status-early%20alpha-orange) ![platform](https://img.shields.io/badge/platform-macOS%2015%2B-lightgrey) ![license](https://img.shields.io/badge/license-MIT-green)
 
+> **Want to build your own instead of running ours?** Read **[ONESHOT.md](ONESHOT.md)** —
+> a first-principles rebuild guide (the tech, the architecture, and every gotcha we hit)
+> written for an AI agent or human to recreate and rebrand this in a day or two.
+
 clawd-scribe records your Google Meet / Zoom / whatever calls **without a bot joining the meeting** — it captures your Mac's system audio (everyone else) plus your microphone (you), transcribes locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), and turns the transcript + your rough notes into clean meeting notes with a local LLM via [Ollama](https://ollama.com).
 
 - 🎙 **No meeting bot** — records system audio via ScreenCaptureKit, invisible to other participants*
