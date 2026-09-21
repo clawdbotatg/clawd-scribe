@@ -390,6 +390,26 @@ $("recordBtn").onclick = async () => {
   }
 };
 
+// Clipboard that works off a secure origin too: navigator.clipboard is
+// undefined on plain-http LAN URLs (http://192.168.x.x:3123), which is how
+// this page is usually opened from another machine — fall back to the
+// selection-based copy (2026-09-21).
+async function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { await navigator.clipboard.writeText(text); return; } catch {}
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("clipboard unavailable — open the page at http://localhost:3123 or over https");
+}
+
 $("copyBtn").onclick = async () => {
   if (!state.current) return;
   const m = state.current;
@@ -401,7 +421,7 @@ $("copyBtn").onclick = async () => {
   if (m.notes && m.notes.trim()) lines.push("", "## My notes", m.notes.trim());
   if (m.summary && m.summary.trim()) lines.push("", "## Generated notes", m.summary.trim());
   try {
-    await navigator.clipboard.writeText(lines.join("\n"));
+    await copyText(lines.join("\n"));
     toast(`Copied ${m.transcript.length} segments — paste away`, true);
   } catch (e) {
     toast("Copy failed: " + e.message);
@@ -526,7 +546,7 @@ $("connectClaudeBtn").onclick = () => {
     <button class="copy-snippet">⧉ Copy</button></div><pre></pre></div>`;
   wrap.querySelector("pre").textContent = text;
   wrap.querySelector(".copy-snippet").onclick = async (e) => {
-    await navigator.clipboard.writeText(text);
+    try { await copyText(text); } catch (err) { toast("Copy failed: " + err.message); return; }
     e.target.textContent = "✓ copied";
     setTimeout(() => (e.target.textContent = "⧉ Copy"), 1500);
   };
