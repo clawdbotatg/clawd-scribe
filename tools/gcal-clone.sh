@@ -42,6 +42,20 @@ case $rc in
   *) echo "rsync failed (exit $rc)" >&2; exit "$rc" ;;
 esac
 echo "  clone size: $(du -sh "$DST" | cut -f1)"
+# Turn off Chrome *browser* sign-in inside the clone. Web cookies (the Google
+# session the peek rides) are untouched, but Chrome no longer treats the clone
+# as a managed-account profile: no chrome://managed-user-profile-notice page
+# (which wedges CDP attach on Chrome 153+), and no enterprise sign-out flow
+# that can revoke the user's Google session server-side when the clone is
+# killed mid-notice — that signs the REAL browser out too (2026-09-20).
+python3 - "$DST/Default/Preferences" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d.setdefault("signin", {}).update({"allowed": False, "allowed_on_next_startup": False})
+json.dump(d, open(p, "w"))
+PY
+echo "  browser sign-in: disabled in the clone (web session kept)"
 if [ -e "$DST/Default/Cookies" ] || [ -e "$DST/Default/Network/Cookies" ]; then
   echo "  cookies: present"
 else

@@ -12,7 +12,8 @@
 //
 // How: a CLONE of the user's Chrome profile (made once by tools/gcal-clone.sh;
 // it carries the Google login) runs headless with a CDP port. This script
-// launches it on demand and leaves it running, so later peeks attach in ~2s.
+// launches it on demand; chrome exits with the last tab, so each peek is a
+// clean ~5s cold launch (warm reattach hangs on managed Workspace profiles).
 // The clone must be driven by the SAME Chrome binary that owns the profile —
 // that's how the cookies decrypt (macOS Keychain "Safe Storage").
 import fs from "node:fs";
@@ -53,11 +54,38 @@ async function debuggerUp() {
   }
 }
 
+// Kill every chrome process running against OUR clone dir (the profile path
+// is unique to this tool, so the match can't hit the user's real browser) and
+// wait for the debug port to drop. Also clears the profile's singleton lock so
+// the relaunch can't hand itself off to a half-dead instance.
+async function killClone() {
+  const pattern = `--user-data-dir=${opts.profile}`;
+  for (const sig of ["-TERM", "-KILL"]) {
+    await new Promise((r) => spawn("pkill", [sig, "-f", "--", pattern], { stdio: "ignore" }).on("exit", r));
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      if (!(await debuggerUp())) break;
+    }
+    if (!(await debuggerUp())) break;
+  }
+  for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+    fs.rmSync(path.join(opts.profile, f), { force: true });
+  }
+}
+
 // Launch the headless clone if it isn't already running. Headless can't steal
 // window focus, but must spoof a normal-Chrome UA or Google serves a warning
 // page instead of the app.
 async function ensureChrome() {
-  if (await debuggerUp()) return;
+  // Never reattach. A clone left behind by a peek that died mid-flight parks a
+  // chrome://managed-user-profile-notice page (managed Google Workspace
+  // account, Chrome 153+) that makes connectOverCDP itself hang — every later
+  // peek then burns its full timeout. The clone is disposable: kill it and
+  // cold-launch, which is a reliable 3-4s.
+  if (await debuggerUp()) {
+    await killClone();
+    if (await debuggerUp()) fail("a stale headless clone on the debug port would not die", 3);
+  }
   if (!fs.existsSync(opts.profile)) {
     fail(`no cloned profile at ${opts.profile} — run tools/gcal-clone.sh once (see README)`, 2);
   }
@@ -199,10 +227,24 @@ async function readPopover(page) {
 
 const { pickCurrent } = require(path.join(HERE, "..", "server", "calendar.js"));
 
+// last-resort watchdog: no single CDP call is trusted to time out (a managed
+// profile once made Target.createTarget hang forever). unref'd so it never
+// keeps the process alive itself; a leaked tab is reaped by the next run.
+setTimeout(() => fail("gcal-peek watchdog: still running after 75s", 5), 75000).unref();
+
 await ensureChrome();
+let failure = null;
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.port}`, { timeout: 15000 });
 try {
   const ctx = browser.contexts()[0];
+  // the clone exists only for these peeks — any page already open is a leak
+  // from a run that died mid-flight (execFile timeout, crash); reap them all.
+  // Chrome exits when its last tab closes, so each peek is a clean cold launch
+  // (~5s, well inside the server's 90s budget). We used to keep chrome warm
+  // between peeks, but a managed Google Workspace profile parks a
+  // chrome://managed-user-profile-notice page that blocks Target.createTarget
+  // on reattach, hanging the peek forever.
+  for (const stray of ctx.pages()) await stray.close().catch(() => {});
   const page = await ctx.newPage();
   try {
     await page.goto("https://calendar.google.com/calendar/u/0/r/day", {
@@ -210,7 +252,11 @@ try {
       timeout: 45000,
     });
     if (/accounts\.google\.com/.test(page.url())) {
-      fail("google session expired in the cloned profile — re-run tools/gcal-clone.sh", 4);
+      // throw, don't fail(): process.exit() would skip the finallys below and
+      // leak this tab into the long-lived chrome on every single peek.
+      const err = new Error("google session expired in the cloned profile — re-run tools/gcal-clone.sh");
+      err.exitCode = 4;
+      throw err;
     }
     await page.waitForSelector("[data-eventid]", { timeout: 20000 }).catch(() => {});
     await page.waitForTimeout(1000);
@@ -251,6 +297,10 @@ try {
   } finally {
     await page.close().catch(() => {});
   }
+} catch (e) {
+  failure = e;
 } finally {
-  await browser.close().catch(() => {}); // disconnect only; chrome keeps running
+  await browser.close().catch(() => {}); // disconnect
+  await killClone(); // don't leave a wedge-prone clone (~300 MB) behind
 }
+if (failure) fail(failure.message, failure.exitCode || 1); // after every cleanup ran
