@@ -113,46 +113,6 @@ async function ensureChrome() {
   fail("headless chrome did not open its debug port within 20s", 3);
 }
 
-// "10:45am to 11am" / "1 to 2pm" / "11:30pm to 12am" → [start, end] Dates today.
-function parseTimeRange(text, base) {
-  const m = text.match(/^(\d{1,2})(?::(\d{2}))?(am|pm)? to (\d{1,2})(?::(\d{2}))?(am|pm)/i);
-  if (!m) return null;
-  const mk = (h, min, ap) => {
-    let hh = Number(h) % 12;
-    if (ap.toLowerCase() === "pm") hh += 12;
-    const d = new Date(base);
-    d.setHours(hh, Number(min || 0), 0, 0);
-    return d;
-  };
-  const endAp = m[6];
-  const startAp = m[3] || endAp; // "1 to 2pm" — start inherits the meridiem
-  const start = mk(m[1], m[2], startAp);
-  const end = mk(m[4], m[5], endAp);
-  if (end <= start) end.setDate(end.getDate() + 1); // crosses midnight
-  return [start, end];
-}
-
-// Grid chips carry everything but guests: first innerText line reads like
-// "10:45am to 11am, Prepare: SLOP.COMPUTER, Austin Griffith, No location,
-// August 1, 2026"; the second line is the bare title. Declined events render
-// struck through.
-async function readGrid(page) {
-  return page.evaluate(() => {
-    const seen = new Map();
-    for (const el of document.querySelectorAll("[data-eventid][data-eventchip]")) {
-      const id = el.getAttribute("data-eventid");
-      if (!id || seen.has(id)) continue;
-      const lines = (el.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean);
-      if (!lines.length) continue;
-      const struck = [el, ...el.querySelectorAll("span,div")].some(
-        (n) => getComputedStyle(n).textDecorationLine.includes("line-through")
-      );
-      seen.set(id, { id, line0: lines[0], title: lines[1] || "", struck });
-    }
-    return [...seen.values()];
-  });
-}
-
 // The details popover: guests (email via data-hovercard-id, RSVP words in the
 // row text), organizer, location, description.
 async function readPopover(page) {
@@ -226,6 +186,7 @@ async function readPopover(page) {
 }
 
 const { pickCurrent } = require(path.join(HERE, "..", "server", "calendar.js"));
+const { TILE_READER_JS, parseTile } = require(path.join(HERE, "..", "server", "gcal-tiles.js"));
 
 // last-resort watchdog: no single CDP call is trusted to time out (a managed
 // profile once made Target.createTarget hang forever). unref'd so it never
@@ -264,18 +225,12 @@ try {
     const today = new Date();
     const events = [];
     const byId = new Map();
-    for (const chip of await readGrid(page)) {
-      const range = parseTimeRange(chip.line0, today);
-      const ev = {
-        gcalId: chip.id,
-        title: chip.title || chip.line0.split(",")[1]?.trim() || chip.line0,
-        calendar: "google",
-        allDay: !range,
-        ...(range ? { startsAt: range[0].toISOString(), endsAt: range[1].toISOString() } : {}),
-        ...(chip.struck ? { myStatus: "declined" } : {}),
-      };
+    const grid = await page.evaluate(TILE_READER_JS);
+    for (const tile of grid.tiles) {
+      const ev = parseTile(tile, today); // dates come from the tile itself
+      if (!ev) continue;
       events.push(ev);
-      byId.set(chip.id, ev);
+      byId.set(ev.gcalId, ev);
     }
 
     // enrich only the event the server will pick — one popover click.

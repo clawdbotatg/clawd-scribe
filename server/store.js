@@ -31,7 +31,9 @@ function meetingDir(id) {
   return path.join(MEETINGS_DIR, id);
 }
 
-function createMeeting(title) {
+// titleSource: see server/titles.js. A passed-in title counts as the user's
+// unless the caller says otherwise (the watchdog's resume keeps the source).
+function createMeeting(title, titleSource) {
   ensureDirs();
   const now = new Date();
   const id =
@@ -43,6 +45,7 @@ function createMeeting(title) {
   const meta = {
     id,
     title: title || "Meeting " + now.toLocaleString(),
+    titleSource: title ? titleSource || "user" : "default",
     startedAt: now.toISOString(),
     endedAt: null,
     durationSec: 0,

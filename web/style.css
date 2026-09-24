@@ -338,11 +338,16 @@ button.record:hover { filter: brightness(1.1); }
 }
 
 /* --- calendar --- */
-#calHint {
-  font-size: 11px; color: var(--dim);
-  margin: 6px 2px 0; line-height: 1.4;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+#calAlso {
+  font-size: 12px; color: var(--dim);
+  margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
 }
+#calAlso .cal-alt {
+  font: inherit; font-size: 12px; color: var(--text);
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 10px; cursor: pointer;
+}
+#calAlso .cal-alt:hover { background: var(--bg3); }
 #calInfo {
   font-size: 12px; color: var(--dim);
   margin-top: 4px; line-height: 1.5;

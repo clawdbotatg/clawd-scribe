@@ -14,6 +14,7 @@ const { generateNotes } = require("./summarize");
 const { diarizeMeeting, modelsAvailable } = require("./diarize");
 const { Watcher } = require("./watcher");
 const calendar = require("./calendar");
+const titles = require("./titles");
 const preflight = require("./preflight");
 
 const config = configMod.load();
@@ -25,7 +26,6 @@ let watcherStatus = null; // last watcher status, so reloads can re-show the bad
 let activeMeeting = null;
 let captureDead = null; // { since, reason } while capture is known broken
 let healTimer = null;
-let lastPreflightAt = 0;
 
 // --- WebSocket broadcast ---
 let wss;
@@ -37,9 +37,16 @@ function broadcast(obj) {
 }
 
 // --- recording control ---
-function startRecording(title) {
+// resumed: { titleSource, calendar, calendarOthers } carried across a
+// watchdog restart, so a resumed recording keeps where its title came from.
+function startRecording(title, resumed = null) {
   if (recorder) throw new Error("already recording");
-  const meeting = store.createMeeting(title);
+  const meeting = store.createMeeting(title, resumed && resumed.titleSource);
+  if (resumed && resumed.calendar) {
+    meeting.calendar = resumed.calendar;
+    meeting.calendarOthers = resumed.calendarOthers || [];
+    store.saveMeta(meeting);
+  }
   activeMeeting = meeting;
   recorder = new Recorder(meeting, config, store);
 
@@ -77,7 +84,58 @@ function startRecording(title) {
   }
 
   broadcast({ type: "status", recording: true, meeting });
+  // An untitled recording asks the calendar what meeting this is. Async: the
+  // read (~20 ms from an open calendar tab, ~5 s via a background one) never
+  // delays capture; the title lands through the titleUpdated broadcast.
+  if (meeting.titleSource === "default") {
+    applyCalendarEvent(meeting.id).catch((e) => console.error("[calendar]", e.message));
+  }
   return meeting;
+}
+
+// Title a just-started meeting after the calendar event happening now, and
+// keep the invite context (+ the runners-up, offered as one-tap swaps).
+// titles.applyCalendarPick only replaces a title that is still the default,
+// and the meta read + write below run in one tick, so a title the user typed
+// during the calendar read always wins.
+async function applyCalendarEvent(meetingId) {
+  let pick = null;
+  let error = null;
+  try {
+    pick = await calendar.currentPick(config, { fresh: true });
+  } catch (e) {
+    error = e.message;
+  }
+  let meta;
+  try {
+    meta = store.getMeta(meetingId);
+  } catch {
+    return; // meeting was deleted while we read
+  }
+  if (error || !pick) {
+    console.error(error ? `[calendar] no title: ${error}` : "[calendar] no calendar event now");
+    broadcast({ type: "calendarResult", meetingId, event: null, error });
+    return;
+  }
+  const titled = titles.applyCalendarPick(meta, pick);
+  store.saveMeta(meta);
+  if (activeMeeting && activeMeeting.id === meetingId) {
+    activeMeeting.title = meta.title;
+    activeMeeting.titleSource = meta.titleSource;
+    activeMeeting.calendar = meta.calendar;
+    activeMeeting.calendarOthers = meta.calendarOthers;
+  }
+  const also = meta.calendarOthers.map((o) => `"${o.title}"`).join(", ");
+  console.error(`[calendar] picked "${pick.event.title}"${also ? ` over ${also}` : ""}${titled ? "" : " (kept the user's title)"}`);
+  broadcast({
+    type: "titleUpdated",
+    meetingId,
+    title: meta.title,
+    titleSource: meta.titleSource,
+    calendar: meta.calendar,
+    calendarOthers: meta.calendarOthers,
+    titled,
+  });
 }
 
 async function stopRecording() {
@@ -112,8 +170,8 @@ async function stopRecording() {
       console.error("[diarize] skipped — models not found at configured paths (see data/config.json)");
     }
   }
-  // Titles are manual-only: the name the user types is never generated,
-  // suggested, or overwritten by anything.
+  // No title work after stop: the calendar titled it at start (if it was
+  // untitled), and nothing generates or overwrites titles (server/titles.js).
   return meta;
 }
 
@@ -188,7 +246,14 @@ function discardIfEmpty(meetingId) {
 async function handleCaptureDead(meeting) {
   const attempts = (readResumeMarker() || {}).attempts || 0;
   console.error(`[watchdog] audio capture dead, restart attempt ${attempts + 1}`);
-  const title = meeting.title;
+  // carry the title AND where it came from across the restart (the in-memory
+  // meeting object may predate the calendar title landing)
+  let carried = { title: meeting.title, titleSource: meeting.titleSource || "user" };
+  try {
+    const m = store.getMeta(meeting.id);
+    carried = { title: m.title, titleSource: titles.titleSourceOf(m), calendar: m.calendar, calendarOthers: m.calendarOthers };
+  } catch {}
+  const title = carried.title;
   await stopRecording();
   discardIfEmpty(meeting.id);
   if (attempts >= MAX_CAPTURE_RESTARTS) {
@@ -203,7 +268,7 @@ async function handleCaptureDead(meeting) {
     message: "no audio coming in (stale macOS permission?) — restarting Clawd Scribe, recording resumes in ~15s",
   });
   fs.mkdirSync(path.dirname(RESUME_PATH), { recursive: true });
-  fs.writeFileSync(RESUME_PATH, JSON.stringify({ title, at: new Date().toISOString(), attempts: attempts + 1 }));
+  fs.writeFileSync(RESUME_PATH, JSON.stringify({ ...carried, at: new Date().toISOString(), attempts: attempts + 1 }));
   // free the port so the launcher starts a fresh daemon instead of just
   // opening the UI, then relaunch through launchd for clean TCC attribution
   server.close();
@@ -219,7 +284,11 @@ function resumeAfterRestart() {
   }
   console.error(`[watchdog] daemon restarted — resuming recording (attempt ${m.attempts})`);
   try {
-    startRecording(m.title);
+    // a still-default title is re-made (and the calendar asked again); older
+    // markers without a source were always treated as typed
+    const src = m.titleSource || "user";
+    if (src === "default") startRecording();
+    else startRecording(m.title, { titleSource: src, calendar: m.calendar, calendarOthers: m.calendarOthers });
   } catch (e) {
     return console.error("[watchdog]", e.message);
   }
@@ -399,9 +468,8 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "GET" && parts[1] === "calendar" && parts[2] === "now") {
         if (!calendar.available(config)) return json(res, 200, { available: false, event: null });
         try {
-          const events = await calendar.fetchEvents(config);
-          const event = calendar.pickCurrent(events, Date.now(), (config.calendar.lookaheadMin || 20) * 60e3);
-          return json(res, 200, { available: true, event });
+          const pick = await calendar.currentPick(config);
+          return json(res, 200, { available: true, event: pick ? pick.event : null, others: pick ? pick.others : [] });
         } catch (e) {
           return json(res, 200, { available: true, event: null, error: e.message });
         }
@@ -473,12 +541,19 @@ const server = http.createServer(async (req, res) => {
           store.writeText(id, "notes.md", body.notes || "");
           return json(res, 200, { ok: true });
         }
-        // PUT /api/meetings/:id/title  { title }
+        // PUT /api/meetings/:id/title  { title } | { calendarIndex }
+        // Either way the title becomes the user's: the calendar never touches
+        // it again. calendarIndex picks one of meta.calendarOthers (the
+        // "also on now" buttons).
         if (req.method === "PUT" && parts[3] === "title") {
           const body = await readBody(req);
           const meta = store.getMeta(id);
-          meta.title = String(body.title || "").slice(0, 200) || meta.title;
+          if (body.calendarIndex != null) titles.swapCalendarPick(meta, Number(body.calendarIndex));
+          else titles.setUserTitle(meta, body.title);
           store.saveMeta(meta);
+          if (activeMeeting && activeMeeting.id === id) {
+            Object.assign(activeMeeting, { title: meta.title, titleSource: meta.titleSource, calendar: meta.calendar, calendarOthers: meta.calendarOthers });
+          }
           return json(res, 200, meta);
         }
         // POST /api/meetings/:id/generate
@@ -575,7 +650,6 @@ server.listen(config.port, config.host, () => {
   setTimeout(async () => {
     if (config.alerts.preflight === false) return;
     if (recorder || readResumeMarker()) return;
-    lastPreflightAt = Date.now();
     const r = await preflight.probeCapture();
     if (r.ok) {
       console.error(`[preflight] boot capture self-test OK (${r.bytes} bytes)`);
@@ -587,29 +661,8 @@ server.listen(config.port, config.host, () => {
     }
   }, 3000);
 
-  // Pre-meeting self-test: when a calendar event is imminent and capture is
-  // untested lately, probe now — the alarm should fire BEFORE the call starts.
-  setInterval(async () => {
-    if (config.alerts.preflight === false) return;
-    if (recorder || captureDead) return; // dead state already alarms + retests
-    if (!calendar.available(config)) return;
-    if (Date.now() - lastPreflightAt < 10 * 60e3) return;
-    let ev;
-    try {
-      const lookaheadMs = (config.alerts.preflightLookaheadMin || 15) * 60e3;
-      ev = calendar.pickCurrent(await calendar.fetchEvents(config), Date.now(), lookaheadMs);
-    } catch {
-      return;
-    }
-    if (!ev) return;
-    lastPreflightAt = Date.now();
-    const r = await preflight.probeCapture();
-    if (r.ok) {
-      console.error(`[preflight] pre-meeting capture self-test OK ("${ev.title}")`);
-    } else {
-      enterDeadState(
-        `"${ev.title}" is starting and audio capture is DEAD (${r.error || "no bytes"}).`
-      );
-    }
-  }, 5 * 60e3);
+  // (The pre-meeting self-test that read the calendar every 5 minutes is
+  // gone: it launched a headless Chrome profile clone each time, and nothing
+  // reads the calendar on a timer any more. Boot test + in-recording
+  // watchdog + the minute-by-minute heal loop remain.)
 });

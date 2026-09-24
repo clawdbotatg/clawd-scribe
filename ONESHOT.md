@@ -88,8 +88,8 @@ Build it in this order; each stage is independently useful and testable.
    Speaker 1/2/3, rename chips in the UI.
 5. **Vision watcher**: OCR the meeting window, active-speaker timeline, fuse
    with the clusters to auto-name speakers. Also: per-meeting snapshots.
-6. **Calendar awareness**: attach the current event's attendees/description
-   as LLM context.
+6. **Calendar awareness**: title the recording after the current event, and
+   attach the invite as LLM context.
 7. **MCP server** so your agent can search/read every call.
 8. **Reliability layer**: watchdog, respawn-with-backoff, permission
    preflight + loud alarm. Boring, and it's what makes the thing trustworthy
@@ -310,21 +310,29 @@ models leak it. **Watch RAM**: a 35B model alongside Chrome + friends
 swap-thrashed a 24 GB machine into uselessness; default to something like
 `qwen3:4b` and let power users upgrade.
 
-**Calendar** (context, not control): "what event is on right now" (running,
-or starting within ~20 min) gives you the invite's attendees + description as
-LLM context — correct name spellings for free. Two local sources: **EventKit**
-via a third tiny Swift helper (works if macOS Calendar syncs the account), or
-— the trick that needs no API keys, no OAuth app — **clone the user's
-logged-in Chrome profile once** and drive a headless Chrome against
-calendar.google.com, scraping via CDP. If their browser can see the calendar,
-the scribe can. Strip HTML from descriptions and cap length; Meet invites are
-join-info boilerplate soup.
+**Calendar.** "What event is on right now" (running, or starting within ~10
+min) titles the recording and gives the notes LLM the invite as context —
+correct name spellings for free. The source that works with zero setup: read
+calendar.google.com out of the user's own logged-in browser through a small
+extension + local HTTP bridge, at the moment they hit Record. Use an
+open calendar tab if one shows today, else open a background tab, read, close.
+Read the DOM with `chrome.scripting`, not `chrome.debugger` (the debugger puts
+a "started debugging" banner on every window). Tiles carry no guest list, but
+Google shows an RSVP word only on events you're a guest on: that's the signal
+that separates a real meeting from a solo block overlapping it. Strip HTML
+from descriptions and cap length; Meet invites are join-info boilerplate soup.
 
 **Titles: decide your policy and enforce it totally.** We first auto-named
-meetings (calendar title, then AI naming) — and an auto-title overwrote a
-name the user had typed by hand. The fix was philosophical, not technical:
-**titles are manual-only, full stop.** Whatever you choose, mixed authority
-over one field is the bug; give every field exactly one writer.
+meetings (calendar title, then AI naming) — and an LLM retitle after stop
+overwrote a name the user had typed by hand. Mixed authority over one field is
+the bug; give every field exactly one writer. We went manual-only for a while,
+then brought the calendar back with the authority made explicit in the data:
+`meta.titleSource` is `default` / `calendar` / `user`, the calendar may replace
+only a `default` title, once, and nothing else (no LLM) ever writes one. Read
+the calendar **at the Record tap**, not on a timer: it's a sub-second read,
+taps happen a few times a day. And read it through the user's *real* browser
+(an extension + local bridge), not a cloned profile: the clone's Google
+session died within days and killing one signed the real browser out.
 
 **Storage.** `data/meetings/<id>/` with `meta.json` (title, times, speaker
 names, calendar event), `transcript.json`, `notes.md` (user's), `summary.md`

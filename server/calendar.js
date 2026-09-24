@@ -2,17 +2,25 @@
 // recording after the event and carry the invite's metadata (attendees,
 // organizer, description) into meta.json and the notes LLM.
 //
-// Two sources, picked by config.calendar.source:
+// Sources, picked by config.calendar.source:
+//   "bridge"   — server/calendar-bridge.js reads calendar.google.com out of
+//                the user's REAL logged-in Chrome via the clawd-browser
+//                bridge. Nothing to set up, nothing to expire. The default.
 //   "gcal"     — tools/gcal-peek.mjs reads calendar.google.com through a
-//                headless clone of the user's logged-in Chrome profile
-//                (made once by tools/gcal-clone.sh). No Google API, no sync.
+//                headless clone of the user's Chrome profile (made by
+//                tools/gcal-clone.sh). Legacy: the clone's login expires in
+//                days, and killing a clone once signed the user's real
+//                browser out (2026-09-20). Opt-in only.
 //   "eventkit" — native/calpeek reads whatever calendars macOS syncs
-//                (needs the account added in System Settings → Internet
-//                Accounts, and the one-time Calendars permission).
-//   "auto"     — gcal if the cloned profile exists, else eventkit.
+//                (needs the account in System Settings → Internet Accounts).
+//                Opt-in only.
+//   "auto"     — bridge. (A fallback chain onto sources that don't work
+//                only hides failures; set one of the others explicitly.)
 const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
+
+const bridge = require("./calendar-bridge");
 
 const CALPEEK = path.join(__dirname, "..", "native", "calpeek");
 const GCALPEEK = path.join(__dirname, "..", "tools", "gcal-peek.mjs");
@@ -25,11 +33,13 @@ function gcalProfileDir(config) {
 function source(config) {
   const cal = (config && config.calendar) || {};
   if (cal.source === "gcal" || cal.source === "eventkit") return cal.source;
-  return fs.existsSync(gcalProfileDir(config)) ? "gcal" : "eventkit";
+  return "bridge";
 }
 
 function available(config) {
-  return source(config) === "gcal" ? fs.existsSync(GCALPEEK) : fs.existsSync(CALPEEK);
+  const src = source(config);
+  if (src === "bridge") return true; // reachability is only known by asking
+  return src === "gcal" ? fs.existsSync(GCALPEEK) && fs.existsSync(gcalProfileDir(config)) : fs.existsSync(CALPEEK);
 }
 
 function run(cmd, args, timeoutMs) {
@@ -48,18 +58,19 @@ function run(cmd, args, timeoutMs) {
 }
 
 // Raw event list around "now", from whichever source is active. Cached for a
-// short window: the UI hint polls once a minute, and a gcal peek costs a real
-// headless-Chrome page load. First-ever calls are slow (EventKit: the macOS
-// permission dialog; gcal: launching the headless clone) — hence the timeouts.
+// few seconds so a burst of callers shares one read; the Record tap always
+// passes fresh. Nothing calls this on a timer.
 let cache = { at: 0, src: null, events: null };
 async function fetchEvents(config, { fresh = false } = {}) {
   const cal = config.calendar || {};
   const src = source(config);
-  if (!fresh && cache.events && cache.src === src && Date.now() - cache.at < (cal.cacheSec || 45) * 1000) {
+  if (!fresh && cache.events && cache.src === src && Date.now() - cache.at < (cal.cacheSec != null ? cal.cacheSec : 10) * 1000) {
     return cache.events;
   }
   let events;
-  if (src === "gcal") {
+  if (src === "bridge") {
+    events = await bridge.fetchEvents(cal.bridge || {});
+  } else if (src === "gcal") {
     const g = cal.gcal || {};
     const args = [GCALPEEK, "--back", String(cal.lookbackMin || 240), "--fwd", String(cal.lookaheadMin || 20)];
     if (g.port) args.push("--port", String(g.port));
@@ -77,39 +88,65 @@ async function fetchEvents(config, { fresh = false } = {}) {
   return events;
 }
 
-// Which event is "the meeting I'm in right now"?
-// - never all-day events, cancelled events, or invites the user declined
-// - an event running now beats one about to start; among running events, ones
-//   with actual invitees beat solo/focus blocks, then the latest start wins
-//   (a 30-min standup inside an all-morning block IS the meeting, not the block)
-// - otherwise the next event starting within lookaheadMs (the gcal source sees
-//   the whole day at once, so "soon" must be bounded here, not by the fetch)
-function pickCurrent(events, now = Date.now(), lookaheadMs = Infinity) {
-  const live = [];
-  const soon = [];
+// Which event is "the meeting I'm in right now"? rankCandidates returns every
+// plausible event, best first; pickCurrent is its head.
+//
+// Candidates: running now, or starting within lookaheadMs. Never all-day,
+// cancelled, declined, or untitled. Ranked by, in order:
+//   1. invited: a meeting with other people (a guest RSVP on the tile, a URL
+//      location, or a known attendee list) beats a solo block — a trash
+//      reminder or a "Prepare:" block overlapping a call never wins;
+//   2. fresh: an event that started less than FRESH_MS ago, or is about to,
+//      beats one that has been running for a while (hitting Record at 1:50
+//      means the 1:45 meeting, not the 1:30 one that's still on);
+//   3. the start closest to now.
+const FRESH_MS = 10 * 60e3;
+function rankCandidates(events, now = Date.now(), lookaheadMs = 10 * 60e3) {
+  const cands = [];
   for (const e of events || []) {
     if (e.allDay || e.cancelled || e.myStatus === "declined" || !e.title) continue;
     const start = Date.parse(e.startsAt);
     const end = Date.parse(e.endsAt);
     if (isNaN(start) || isNaN(end)) continue;
-    if (start <= now && now < end) live.push({ e, start });
-    else if (start > now && start - now <= lookaheadMs) soon.push({ e, start });
+    const live = start <= now && now < end;
+    const soon = start > now && start - now <= lookaheadMs;
+    if (!live && !soon) continue;
+    cands.push({
+      e,
+      invited: e.invited || (e.attendees || []).length > 0 ? 1 : 0,
+      fresh: soon || now - start < FRESH_MS ? 1 : 0,
+      dist: Math.abs(start - now),
+    });
   }
-  const invited = (x) => ((x.e.attendees || []).length ? 1 : 0);
-  live.sort((a, b) => invited(b) - invited(a) || b.start - a.start);
-  if (live.length) return live[0].e;
-  soon.sort((a, b) => a.start - b.start);
-  return soon.length ? soon[0].e : null;
+  cands.sort((a, b) => b.invited - a.invited || b.fresh - a.fresh || a.dist - b.dist);
+  return cands.map((c) => c.e);
+}
+
+function pickCurrent(events, now = Date.now(), lookaheadMs = 10 * 60e3) {
+  return rankCandidates(events, now, lookaheadMs)[0] || null;
 }
 
 // The best guess for the meeting happening now, or null (helper missing,
 // feature disabled, or an empty calendar). Throws on access-denied/bad output
 // so callers can log the reason.
 async function currentEvent(config, opts) {
+  const p = await currentPick(config, opts);
+  return p ? p.event : null;
+}
+
+// { event, others } — the pick plus the runners-up the UI offers as one-tap
+// swaps — or null when there's no event now (or the feature is off).
+async function currentPick(config, opts) {
   if (!available(config)) return null;
   if (config.calendar && config.calendar.enabled === false) return null;
-  const cal = config.calendar || {};
-  return pickCurrent(await fetchEvents(config, opts), Date.now(), (cal.lookaheadMin || 20) * 60e3);
+  const ranked = rankCandidates(await fetchEvents(config, opts), Date.now(), lookaheadMs(config));
+  if (!ranked.length) return null;
+  return { event: ranked[0], others: ranked.slice(1, 5) };
+}
+
+function lookaheadMs(config) {
+  const cal = (config && config.calendar) || {};
+  return (cal.lookaheadMin != null ? cal.lookaheadMin : 10) * 60e3;
 }
 
 // The slice of an event worth persisting into a meeting's meta.json.
@@ -127,4 +164,6 @@ function metaFromEvent(e) {
   };
 }
 
-module.exports = { available, source, fetchEvents, pickCurrent, currentEvent, metaFromEvent };
+module.exports = {
+  available, source, fetchEvents, rankCandidates, pickCurrent, currentEvent, currentPick, lookaheadMs, metaFromEvent,
+};

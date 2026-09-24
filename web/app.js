@@ -270,8 +270,8 @@ function fmtClock(iso) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-// invite metadata attached to the open meeting (older recordings only —
-// titles and metadata are no longer pulled from the calendar)
+// the calendar event the open meeting was titled after (set at Record by the
+// daemon — see server/titles.js)
 function renderCalInfo() {
   const el = $("calInfo");
   const cal = state.current && state.current.meta.calendar;
@@ -290,6 +290,39 @@ function renderCalInfo() {
     html += ` <details class="cal-desc"><summary>description</summary><div>${esc(desc.slice(0, 1200))}</div></details>`;
   }
   el.innerHTML = html;
+}
+
+// "also on now": the other events that overlapped when Record was hit. One
+// tap makes one of them the title (and the invite context). Shown only while
+// the title is a calendar title, so it never nags about a typed one.
+function renderCalAlso() {
+  const el = $("calAlso");
+  const meta = state.current && state.current.meta;
+  const others = (meta && meta.calendarOthers) || [];
+  const isCalTitle = meta && meta.calendar && meta.title === meta.calendar.title;
+  el.classList.toggle("hidden", !(others.length && isCalTitle));
+  if (el.classList.contains("hidden")) return;
+  el.innerHTML = `<span class="lbl">also on now:</span>`;
+  others.forEach((o, i) => {
+    const b = document.createElement("button");
+    b.className = "cal-alt";
+    b.textContent = o.title;
+    b.title = `${fmtClock(o.startsAt)}–${fmtClock(o.endsAt)} · use this as the title`;
+    b.onclick = async () => {
+      try {
+        const m = await api("PUT", `meetings/${meta.id}/title`, { calendarIndex: i });
+        if (!state.current || state.current.meta.id !== m.id) return;
+        state.current.meta = { ...state.current.meta, ...m };
+        $("title").value = m.title;
+        renderCalInfo();
+        renderCalAlso();
+        await refreshMeetings();
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    el.appendChild(b);
+  });
 }
 
 function showEmpty() {
@@ -314,6 +347,7 @@ async function openMeeting(id) {
   renderSpeakers();
   renderVision();
   renderCalInfo();
+  renderCalAlso();
   renderSummary();
   renderShots();
   renderMeetingList();
@@ -488,7 +522,11 @@ $("notes").addEventListener("input", () => {
 // --- title edit ---
 $("title").addEventListener("change", async () => {
   if (!state.current) return;
-  await api("PUT", `meetings/${state.current.meta.id}/title`, { title: $("title").value });
+  const m = await api("PUT", `meetings/${state.current.meta.id}/title`, { title: $("title").value });
+  if (state.current && state.current.meta.id === m.id) {
+    state.current.meta = { ...state.current.meta, ...m };
+    renderCalAlso();
+  }
   await refreshMeetings();
 });
 
@@ -652,6 +690,27 @@ function handleWS(msg) {
       break;
     case "recError":
       toast(msg.message);
+      break;
+    case "titleUpdated":
+      // the calendar titled (or, for a typed title, just annotated) a meeting
+      if (state.current && state.current.meta.id === msg.meetingId) {
+        Object.assign(state.current.meta, {
+          title: msg.title,
+          titleSource: msg.titleSource,
+          calendar: msg.calendar,
+          calendarOthers: msg.calendarOthers,
+        });
+        // never clobber the box while the user is typing in it: their edit
+        // commits on blur and wins on the server
+        if (document.activeElement !== $("title")) $("title").value = msg.title;
+        renderCalInfo();
+        renderCalAlso();
+      }
+      if (msg.titled) toast(`🗓 From your calendar: “${msg.title}”`, true);
+      refreshMeetings();
+      break;
+    case "calendarResult":
+      toast(msg.error ? `Couldn't read your calendar: ${msg.error}` : "No calendar event right now — title it by hand", !msg.error);
       break;
     case "notesStart":
       state.generatingFor = msg.meetingId;

@@ -17,7 +17,7 @@ clawd-scribe records your Google Meet / Zoom / whatever calls **without a bot jo
 - 👥 **Speaker identification** — your mic and the meeting audio are captured as separate channels, so *you* are always attributed correctly; remote voices are clustered into Speaker 1/2/3 with local diarization ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) + pyannote segmentation + NeMo TitaNet embeddings) and you name them with one click
 - 👁 **Meeting-window vision** — while recording, clawd-scribe watches your Meet/Zoom window (ScreenCaptureKit + Apple's local Vision OCR, ~1fps): it reads participant names off the tiles and tracks the active-speaker highlight border, then fuses that timeline with the voice clusters to **auto-name speakers** — no clicking required when it's confident
 - 🖼 **Meeting snapshots** — a handful of evenly-spaced frames of the meeting window are saved with each recording and shown under the generated notes; a 📸 button (bottom right while recording) snapshots the current moment on demand, and those are always kept
-- 🗓 **Calendar-aware** — record during a calendar event and the recording names itself after it, pulling the invite's attendees and description in as context for the notes (reads Google Calendar through your own logged-in browser profile, or macOS Calendar via EventKit — locally either way)
+- 🗓 **Calendar-aware** — hit Record and the recording is titled after the calendar event you're in, read out of Google Calendar in your own logged-in Chrome at that moment (nothing polls, nothing to log into, no Google API). A title you type always wins
 - ✍️ **Granola-style notes** — type rough notes during the call; the LLM weaves them together with the transcript, attributing action items to the right people
 - 🔇 **Echo gate** — if you're on laptop speakers, mic chunks that are just the meeting audio leaking back in are detected by envelope cross-correlation and dropped
 - 📂 **Plain files** — every meeting is a folder of markdown + JSON + WAV you own
@@ -100,7 +100,7 @@ and they stick across restarts. (Restarting after a code update = quit the
 
 ## Usage
 
-1. Hit **Record** when your meeting starts, and type the meeting's name in the title field. **Titles are manual-only**: nothing ever generates, suggests, or overwrites a title — the name you type is the name it keeps.
+1. Hit **Record** when your meeting starts. Within a second the title becomes the calendar event you're in (see **Calendar** below). When meetings overlap, the others show as **also on now** buttons under the title: one tap swaps. Type a title and it's yours: nothing ever overwrites it.
 2. The live transcript appears within ~15 seconds, labeled **Me** (your mic) or **Them** (system audio).
 3. Type rough notes in **My notes** during the call — just fragments of what mattered.
 4. Hit **Stop**. Speaker identification runs automatically; remote voices become **Speaker 1/2/3** chips — click a chip to type the person's real name.
@@ -108,24 +108,37 @@ and they stick across restarts. (Restarting after a code update = quit the
 
 **Who is who?** Your voice never needs diarizing — it arrives on its own channel (your mic), so "Me" is ground truth. Only the remote side is clustered by voice. Names come from two places: the **vision watcher** (below) auto-fills them when it can, and the rename chips are the manual override. Names persist per meeting and flow into the generated notes.
 
-**Calendar (query-only).** `GET /api/calendar/now` answers "what event is on right now" for external tooling. It plays **no part in recording**: auto-naming from the calendar (and the AI ✨ Name button) were removed 2026-08-05 after the calendar title overwrote a manually entered name — titles are manual-only, full stop. Two sources (`calendar.source`, default `auto`):
+**Calendar.** When you hit Record on an untitled meeting, the daemon reads your
+Google Calendar out of your **real, logged-in Chrome**, through the
+[clawd-browser](https://github.com/clawdbotatg/clawd-browser-extension) bridge
+(its extension + a small local server; it must run on the same Mac as Chrome,
+or set `calendar.bridge.token` for another machine). If a Google Calendar tab
+showing today is open, that tab is read (read-only, well under a second). If
+not, the scribe opens its own calendar tab **in the background** (your focus
+never moves), reads it, and closes it (~5 s). Reads use the extension's
+`select` command, which doesn't attach Chrome's debugger. Nothing reads your
+calendar between Record taps.
 
-- **`gcal`** — reads calendar.google.com **through your own logged-in Chrome
-  profile**: run `tools/gcal-clone.sh` once to clone the profile that's signed
-  into Google (default: Chrome's `Default`) into `data/gcal-profile`, and
-  `tools/gcal-peek.mjs` drives a headless copy of your Chrome against it. No
-  Google API keys, no OAuth app, no macOS account setup — if your browser can
-  see the calendar, the scribe can. The headless clone launches on first use
-  and sticks around (~300 MB RAM) so later peeks take ~2s. If Google ever
-  rotates the clone's session out (`gcal-peek` reports "session expired"),
-  just re-run `tools/gcal-clone.sh`. `auto` uses this source whenever
-  `data/gcal-profile` exists.
-- **`eventkit`** — a third tiny native helper (`native/calpeek`) reads whatever
-  calendars macOS Calendar syncs (iCloud, or Google added via System Settings →
-  Internet Accounts with **Calendars** enabled). First use pops a macOS
-  *"access your calendar"* prompt.
+Picking the meeting, from events running now or starting within
+`lookaheadMin` (10): events you're a **guest** on (Google shows an RSVP word
+on those) or with a video/URL location beat solo blocks; then a meeting that
+just started or is about to beats one that's been running a while; then the
+start closest to the tap. The title is the event's exact name, no rewording.
+The runners-up become the **also on now** buttons.
 
-Either way everything stays on your machine, and `"calendar": { "enabled": false }` in config disables the peek entirely.
+**One writer per title** (`meta.titleSource`): the calendar may only replace
+the default `Meeting <date>` title, once, and never after you've typed. No LLM
+names anything (an LLM retitle that overwrote typed names was removed
+2026-08-05). If the calendar can't be read, the recording starts exactly as
+before and a toast says why.
+
+`GET /api/calendar/now` answers "what event is on right now" for other tools.
+Sources (`calendar.source`): `auto`/`bridge` (above, the default); `gcal`,
+the legacy headless clone of your Chrome profile (`tools/gcal-clone.sh` +
+`tools/gcal-peek.mjs`; its Google session expires within days, and killing a
+clone once signed the real browser out, so opt-in only); `eventkit`, macOS
+Calendar via `native/calpeek` (opt-in). `"calendar": { "enabled": false }`
+turns it all off. `node tools/bridge-peek.mjs` shows what the scribe sees.
 
 **The vision watcher.** While recording, a second native helper looks for a window whose title matches a meeting app (`meet`, `zoom`, `teams`, `webex` — configurable), captures one frame per second, OCRs it with Apple's on-device Vision framework, and finds the active-speaker border (Meet's blue / Zoom's green tile outline) by color clustering. That produces "Tom Chen's tile was highlighted from 4:10–4:25". After the meeting, voice cluster turns are matched against that timeline — consistent overlap means Speaker 2 *is* Tom Chen, and the chip is named automatically (your manual renames always win; ambiguous overlaps are left alone). Caveats: keep the meeting tab as the **active tab** of its browser window (its title is how the window is found — naturally true when you're in the call), and a 👁 badge in the sidebar shows which window is being watched. If the UI of Meet/Zoom changes their highlight colors, tweak `watcher.colors` in config. Everything is pixels-in, JSON-out on your machine — frames are never saved or uploaded.
 
@@ -151,9 +164,10 @@ Edit `data/config.json` (created on first run):
     "auto": true          // identify speakers automatically on stop
   },
   "calendar": {
-    "enabled": true,      // name recordings after the calendar event happening now
-    "source": "auto",     // "gcal" (logged-in Chrome profile) | "eventkit" (macOS Calendar)
-    "lookaheadMin": 20    // an event starting this soon counts as "now"
+    "enabled": true,      // title recordings after the calendar event happening now
+    "source": "auto",     // "auto"/"bridge" (your Chrome) | "gcal" (legacy clone) | "eventkit"
+    "lookaheadMin": 10,   // an event starting this soon is a candidate at Record
+    "bridge": { "url": "http://127.0.0.1:8765", "token": null }
   },
   "watcher": {
     "enabled": true,      // watch the meeting window during recording

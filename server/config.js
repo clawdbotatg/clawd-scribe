@@ -57,16 +57,21 @@ const DEFAULTS = {
     auto: true, // run automatically when a recording stops
   },
   calendar: {
-    enabled: true, // name recordings after the calendar event happening now
-    // "gcal" = read calendar.google.com through a cloned logged-in Chrome
-    // profile (tools/gcal-clone.sh once, then tools/gcal-peek.mjs);
-    // "eventkit" = macOS Calendar via native/calpeek;
-    // "auto" = gcal if the cloned profile exists, else eventkit.
+    enabled: true, // title recordings after the calendar event happening now
+    // "auto"/"bridge" = read calendar.google.com out of the user's real Chrome
+    // via the clawd-browser bridge (server/calendar-bridge.js);
+    // "gcal" = legacy headless profile clone (tools/gcal-peek.mjs), opt-in;
+    // "eventkit" = macOS Calendar via native/calpeek, opt-in.
     source: "auto",
-    lookbackMin: 240, // how far back to look for a still-running event
-    lookaheadMin: 20, // an event starting this soon counts as "now"
+    lookbackMin: 240, // gcal/eventkit: how far back to look for a running event
+    lookaheadMin: 10, // an event starting this soon is a candidate at Record
     timeoutSec: 25, // eventkit: first-ever peek blocks on the macOS permission dialog
-    cacheSec: 45, // events cache — the UI hint polls every minute
+    cacheSec: 10, // a burst of callers shares one read; Record always reads fresh
+    bridge: {
+      url: "http://127.0.0.1:8765", // the clawd-browser bridge next to Chrome
+      token: null, // only when Chrome is on ANOTHER machine: its /k/<token>
+      timeoutSec: 15, // whole read incl. retries; a background tab takes ~5s
+    },
     gcal: {
       port: 9333, // CDP port for the headless profile clone
       profileDir: null, // default: data/gcal-profile
@@ -78,8 +83,7 @@ const DEFAULTS = {
     enabled: true, // on-screen alarm (notification + dialog) when capture is dead
     dialog: true, // modal dialog too, not just a notification
     cooldownMin: 10, // minimum minutes between alarms
-    preflight: true, // capture self-test at boot and before calendar events
-    preflightLookaheadMin: 15, // test when an event starts within this window
+    preflight: true, // capture self-test at boot (no longer tied to the calendar)
     command: null, // optional shell hook on alarm; gets $SCRIBE_ALERT_REASON
   },
   watcher: {
@@ -93,6 +97,21 @@ const DEFAULTS = {
   },
 };
 
+// load() persists every default into config.json, so a changed default never
+// reaches an existing install. Values still equal to an OLD default are
+// treated as never-edited and moved to the new one.
+function migrate(cfg) {
+  // the pre-meeting self-test no longer reads the calendar
+  if (cfg.alerts) delete cfg.alerts.preflightLookaheadMin;
+  const cal = cfg.calendar;
+  if (!cal) return;
+  // 2026-09-23: titles come from the calendar again, read at Record. The old
+  // 20-min lookahead named a recording after a meeting 20 minutes out; the
+  // 45 s cache existed for a once-a-minute UI poll that no longer exists.
+  if (cal.lookaheadMin === 20) cal.lookaheadMin = 10;
+  if (cal.cacheSec === 45) cal.cacheSec = 10;
+}
+
 function load() {
   let cfg = {};
   if (fs.existsSync(CONFIG_PATH)) {
@@ -102,6 +121,7 @@ function load() {
       console.error("config.json is invalid, using defaults:", e.message);
     }
   }
+  migrate(cfg);
   const merged = {
     ...DEFAULTS,
     ...cfg,
@@ -110,6 +130,7 @@ function load() {
     calendar: {
       ...DEFAULTS.calendar,
       ...(cfg.calendar || {}),
+      bridge: { ...DEFAULTS.calendar.bridge, ...((cfg.calendar || {}).bridge || {}) },
       gcal: { ...DEFAULTS.calendar.gcal, ...((cfg.calendar || {}).gcal || {}) },
     },
     alerts: { ...DEFAULTS.alerts, ...(cfg.alerts || {}) },
@@ -127,4 +148,4 @@ function load() {
   return merged;
 }
 
-module.exports = { load, CONFIG_PATH };
+module.exports = { load, migrate, CONFIG_PATH };
