@@ -579,6 +579,25 @@ const server = http.createServer(async (req, res) => {
           broadcast({ type: "speakersUpdated", meetingId: id, speakers: meta.speakers });
           return json(res, 200, meta);
         }
+        // POST /api/meetings/:id/transcript/delete  { t, speaker, text }
+        // Remove one transcript line (the ✕). Works while recording too.
+        if (req.method === "POST" && parts[3] === "transcript" && parts[4] === "delete") {
+          const body = await readBody(req);
+          if (typeof body.text !== "string" || typeof body.t !== "number") throw new Error("need t and text");
+          const r = store.deleteSegment(id, { t: body.t, text: body.text, speaker: body.speaker });
+          if (!r) return json(res, 404, { error: "that line is already gone" });
+          broadcast({ type: "transcriptEdited", meetingId: id });
+          return json(res, 200, r);
+        }
+        // POST /api/meetings/:id/transcript/restore  { index, segment } — undo
+        if (req.method === "POST" && parts[3] === "transcript" && parts[4] === "restore") {
+          const body = await readBody(req);
+          const seg = body.segment;
+          if (!seg || typeof seg.text !== "string" || typeof seg.t !== "number") throw new Error("need a segment");
+          store.restoreSegment(id, body.index, seg);
+          broadcast({ type: "transcriptEdited", meetingId: id });
+          return json(res, 200, { ok: true });
+        }
         // DELETE /api/meetings/:id
         if (req.method === "DELETE" && !parts[3]) {
           if (activeMeeting && activeMeeting.id === id) throw new Error("meeting is recording");

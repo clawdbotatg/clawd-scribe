@@ -229,7 +229,21 @@ button.record:hover { filter: brightness(1.1); }
 .speaker-chip .time { color: var(--dim); font-size: 10px; }
 
 #transcript { flex: 1; overflow-y: auto; padding-right: 6px; }
-.seg { margin-bottom: 10px; }
+.seg { margin-bottom: 10px; position: relative; padding-right: 22px; }
+.seg-x {
+  position: absolute; top: 0; right: 0;
+  font: inherit; font-size: 12px; line-height: 1;
+  background: none; border: none; color: var(--dim);
+  padding: 3px 4px; cursor: pointer; opacity: 0;
+}
+.seg:hover .seg-x, .seg-x:focus-visible { opacity: 1; }
+.seg-x:hover { color: var(--red); }
+@media (hover: none) { .seg-x { opacity: 0.5; } } /* touch: no hover, keep it findable */
+#toast .toast-act {
+  margin-left: 12px; font: inherit; font-weight: 700;
+  background: none; border: none; color: inherit;
+  text-decoration: underline; cursor: pointer; padding: 0;
+}
 .seg .ts {
   font-size: 11px; color: var(--accent);
   font-variant-numeric: tabular-nums;

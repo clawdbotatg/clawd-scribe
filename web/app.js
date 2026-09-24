@@ -59,12 +59,23 @@ function fmtDate(iso) {
     " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function toast(msg, info) {
+// action: optional { label, fn } — a button in the toast (e.g. Undo)
+function toast(msg, info, action) {
   const t = $("toast");
   t.textContent = msg;
   t.className = info ? "info" : "";
+  if (action) {
+    const b = document.createElement("button");
+    b.className = "toast-act";
+    b.textContent = action.label;
+    b.onclick = () => {
+      t.classList.add("hidden");
+      action.fn();
+    };
+    t.appendChild(b);
+  }
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.add("hidden"), 5000);
+  toast._t = setTimeout(() => t.classList.add("hidden"), action ? 8000 : 5000);
 }
 
 // --- API ---
@@ -152,8 +163,11 @@ function speakerName(key) {
   return speakers[key] || "Speaker " + key;
 }
 
-function renderTranscript() {
+// keepScroll: stay where the reader is (deleting lines near the top);
+// otherwise follow the newest line, as live transcription always has.
+function renderTranscript({ keepScroll = false } = {}) {
   const el = $("transcript");
+  const top = el.scrollTop;
   el.innerHTML = "";
   for (const s of state.current.transcript) {
     const div = document.createElement("div");
@@ -163,9 +177,53 @@ function renderTranscript() {
       ? `<span class="spk" style="color:${speakerColor(key)}">${esc(speakerName(key))}</span>`
       : "";
     div.innerHTML = `<span class="ts">${fmtTime(s.t)}</span>${spk}${esc(s.text)}`;
+    const x = document.createElement("button");
+    x.className = "seg-x";
+    x.textContent = "✕";
+    x.title = "Delete this line";
+    x.onclick = () => deleteSegment(s);
+    div.appendChild(x);
     el.appendChild(div);
   }
-  el.scrollTop = el.scrollHeight;
+  el.scrollTop = keepScroll ? top : el.scrollHeight;
+}
+
+// The ✕ on a transcript line: gone at once, with an Undo in the toast.
+// The server finds the line by content (t + speaker + text), so lines
+// arriving mid-recording can't make it delete the wrong one.
+async function deleteSegment(seg) {
+  const meetingId = state.current.meta.id;
+  const key = { t: seg.t, speaker: seg.speaker, text: seg.text };
+  state.current.transcript = state.current.transcript.filter((s) => s !== seg);
+  renderTranscript({ keepScroll: true });
+  renderSpeakers();
+  try {
+    const r = await api("POST", `meetings/${meetingId}/transcript/delete`, key);
+    toast("Line deleted", true, {
+      label: "Undo",
+      fn: async () => {
+        try {
+          await api("POST", `meetings/${meetingId}/transcript/restore`, r);
+          await reloadTranscript(meetingId);
+        } catch (e) {
+          toast("Undo failed: " + e.message);
+        }
+      },
+    });
+  } catch (e) {
+    toast("Delete failed: " + e.message);
+    await reloadTranscript(meetingId);
+  }
+}
+
+// re-read the transcript from the daemon (after an edit here or elsewhere)
+async function reloadTranscript(meetingId) {
+  if (!state.current || state.current.meta.id !== meetingId) return;
+  const m = await api("GET", "meetings/" + meetingId);
+  if (!state.current || state.current.meta.id !== meetingId) return;
+  state.current.transcript = m.transcript;
+  renderTranscript({ keepScroll: true });
+  renderSpeakers();
 }
 
 function renderSpeakers() {
@@ -690,6 +748,9 @@ function handleWS(msg) {
       break;
     case "recError":
       toast(msg.message);
+      break;
+    case "transcriptEdited":
+      reloadTranscript(msg.meetingId).catch(() => {});
       break;
     case "titleUpdated":
       // the calendar titled (or, for a typed title, just annotated) a meeting

@@ -87,6 +87,36 @@ function appendTranscript(id, segment) {
   atomicWrite(path.join(meetingDir(id), "transcript.json"), JSON.stringify(segs, null, 1));
 }
 
+// Transcript line removal (the ✕ on a line) and its undo. Both are a
+// synchronous read-modify-write, like appendTranscript: the daemon is one
+// thread, so a delete can't interleave with the recorder's appends or
+// diarization's relabel. A segment is identified by content, not index —
+// the list grows while recording — and both channels can share a t, so the
+// key is t + speaker + text.
+function sameSegment(a, b) {
+  return a.t === b.t && a.text === b.text && (a.speaker ?? null) === (b.speaker ?? null);
+}
+
+// → { index, segment } of the removed line, or null if it isn't there.
+function deleteSegment(id, match) {
+  const segs = getTranscript(id);
+  const index = segs.findIndex((s) => sameSegment(s, match));
+  if (index < 0) return null;
+  const [segment] = segs.splice(index, 1);
+  atomicWrite(path.join(meetingDir(id), "transcript.json"), JSON.stringify(segs, null, 1));
+  return { index, segment };
+}
+
+// Undo: put a removed line back where it was (clamped). No-op if it's
+// already there (a double-tapped undo).
+function restoreSegment(id, index, segment) {
+  const segs = getTranscript(id);
+  if (segs.some((s) => sameSegment(s, segment))) return segs;
+  segs.splice(Math.max(0, Math.min(Number(index) || 0, segs.length)), 0, segment);
+  atomicWrite(path.join(meetingDir(id), "transcript.json"), JSON.stringify(segs, null, 1));
+  return segs;
+}
+
 function readText(id, file) {
   const p = path.join(meetingDir(id), file);
   return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
@@ -190,6 +220,8 @@ module.exports = {
   listMeetings,
   getTranscript,
   appendTranscript,
+  deleteSegment,
+  restoreSegment,
   readText,
   writeText,
   getVision,

@@ -101,7 +101,7 @@ and they stick across restarts. (Restarting after a code update = quit the
 ## Usage
 
 1. Hit **Record** when your meeting starts. Within a second the title becomes the calendar event you're in (see **Calendar** below). When meetings overlap, the others show as **also on now** buttons under the title: one tap swaps. Type a title and it's yours: nothing ever overwrites it.
-2. The live transcript appears within ~15 seconds, labeled **Me** (your mic) or **Them** (system audio).
+2. The live transcript appears within ~15 seconds, labeled **Me** (your mic) or **Them** (system audio). Hover a line and hit its **✕** to delete it (small talk at the start, goodbyes at the end); the toast offers **Undo**. Deleted lines are gone from the notes, search and MCP too.
 3. Type rough notes in **My notes** during the call — just fragments of what mattered.
 4. Hit **Stop**. Speaker identification runs automatically; remote voices become **Speaker 1/2/3** chips — click a chip to type the person's real name.
 5. Hit **✨ Generate**. The LLM merges your notes with the speaker-labeled transcript into structured notes (summary, key points, decisions, action items with owners).
