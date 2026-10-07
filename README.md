@@ -161,7 +161,8 @@ Edit `data/config.json` (created on first run):
   "chunkSeconds": 12,     // live-transcription chunk size
   "diarization": {
     "threshold": 1.1,     // lower = more speakers detected, higher = fewer
-    "auto": true          // identify speakers automatically on stop
+    "auto": true,         // identify speakers automatically on stop
+    "selfNames": []       // your name on meeting tiles — never given to a remote voice (usually auto-detected)
   },
   "calendar": {
     "enabled": true,      // title recordings after the calendar event happening now

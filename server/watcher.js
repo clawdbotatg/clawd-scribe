@@ -35,6 +35,8 @@ const UI_WORDS = new Set([
   "home", "post", "profile", "view profile", "explore", "articles",
   "bookmarks", "following", "followers", "notifications", "today",
   "q search", "money", "news",
+  // file/dialog chrome and slide text that got auto-named before (10-07)
+  "file", "cancel", "decision", "meeting time", "open", "save", "edit",
 ]);
 
 // Two roster keys are the same person when one is an OCR fragment or a
@@ -207,43 +209,38 @@ class Watcher extends EventEmitter {
     }
     if (best) this.samples.push({ t, name: best.name });
 
-    // Pair detected faces with the name label on the same tile: the name sits
-    // below the face (Meet/Zoom put it at the tile's bottom edge), roughly in
-    // the same horizontal region. Match one-to-one, nearest gap first, so one
-    // face can't claim a neighboring tile's label when its own label is taken.
+    // Pair detected faces with the name label on the same tile. Meet, Zoom
+    // and Teams put the label at the tile's bottom-LEFT, so a face's label
+    // starts left of the face's center and is the nearest such label; the
+    // neighbor tile's label starts right of it. (Pairing on vertical gap
+    // alone tied between side-by-side tiles and handed Rahul's face to
+    // Philip's name, 2026-10-06.) A face with two near-equal labels is
+    // skipped — no pairing beats a wrong one.
     const cands = [];
     for (const f of msg.faces || []) {
       if (!f.jpg) continue;
       const fcx = f.x + f.w / 2;
       const fBottom = f.y + f.h;
+      const opts = [];
       for (const n of names) {
         const gap = n.y + n.h / 2 - fBottom;
         if (gap < -0.02 || gap > Math.max(f.h, 0.08)) continue;
-        const dx = Math.abs(n.x + n.w / 2 - fcx);
-        if (dx > Math.max(f.w * 1.5, 0.1)) continue;
-        cands.push({ f, name: normalizeName(n.s), gap });
+        const lead = fcx - n.x; // how far left of the face center the label starts
+        if (lead < -0.01 || lead > Math.max(f.w * 2.5, 0.2)) continue;
+        opts.push({ f, name: normalizeName(n.s), cost: Math.max(0, lead) + Math.max(0, gap) });
       }
+      opts.sort((p, q) => p.cost - q.cost);
+      if (opts.length > 1 && opts[1].cost < opts[0].cost * 1.5 + 0.02) continue;
+      if (opts.length) cands.push(opts[0]);
     }
-    cands.sort((a, b) => a.gap - b.gap);
-    const usedFaces = new Set();
+    cands.sort((a, b) => a.cost - b.cost);
     const usedNames = new Set();
     const paired = [];
     for (const c of cands) {
-      if (usedFaces.has(c.f) || usedNames.has(c.name)) continue;
-      usedFaces.add(c.f);
+      if (usedNames.has(c.name)) continue;
       usedNames.add(c.name);
       paired.push(this.displayForm(c.name));
-      const area = c.f.w * c.f.h;
-      const prev = this.faces.get(c.name);
-      if (!prev) {
-        this.faces.set(c.name, { votes: 1, area, jpg: Buffer.from(c.f.jpg, "base64") });
-      } else {
-        prev.votes++;
-        if (area >= prev.area) {
-          prev.area = area;
-          prev.jpg = Buffer.from(c.f.jpg, "base64");
-        }
-      }
+      this.addFace(c.name, c.f);
     }
 
     // compact frame summary for the debug UI (no jpg payloads)
@@ -267,6 +264,52 @@ class Watcher extends EventEmitter {
     this.recent.push(entry);
     if (this.recent.length > 20) this.recent.shift();
     this.emit("frame", entry);
+  }
+
+  // Faces are tallied per name AND per tile position: a name's photo comes
+  // from the spot it was most often paired at, and only if no other name
+  // was paired there more often — so one stray mispairing can't swap in
+  // someone else's (bigger) face, which is how pictures went wrong before.
+  addFace(name, f) {
+    const pos = `${Math.round((f.x + f.w / 2) * 10)},${Math.round((f.y + f.h / 2) * 10)}`;
+    if (!this.faces.has(name)) this.faces.set(name, new Map());
+    const m = this.faces.get(name);
+    const area = f.w * f.h;
+    const prev = m.get(pos);
+    if (!prev) m.set(pos, { votes: 1, area, jpg: Buffer.from(f.jpg, "base64") });
+    else {
+      prev.votes++;
+      if (area >= prev.area) {
+        prev.area = area;
+        prev.jpg = Buffer.from(f.jpg, "base64");
+      }
+    }
+  }
+
+  // {votes, jpg} for a confident photo of this name, else null.
+  bestFace(name, minVotes = 3) {
+    const m = this.faces.get(name);
+    if (!m) return null;
+    let total = 0;
+    let best = null;
+    let bestPos = null;
+    for (const [pos, b] of m) {
+      total += b.votes;
+      if (!best || b.votes > best.votes) [best, bestPos] = [b, pos];
+    }
+    if (best.votes < minVotes || best.votes < total * 0.6) return null;
+    for (const [other, om] of this.faces) {
+      if (other === name) continue;
+      const ob = om.get(bestPos);
+      if (ob && ob.votes >= best.votes) return null;
+    }
+    return { votes: total, jpg: best.jpg };
+  }
+
+  faceVotes(name) {
+    let n = 0;
+    for (const b of (this.faces.get(name) || new Map()).values()) n += b.votes;
+    return n;
   }
 
   // Manual snapshot (the 📸 button): pin the latest captured frame. Pinned
@@ -307,10 +350,16 @@ class Watcher extends EventEmitter {
         const cur = this.faces.get(to);
         if (!cur) this.faces.set(to, face);
         else {
-          cur.votes += face.votes;
-          if (face.area > cur.area) {
-            cur.area = face.area;
-            cur.jpg = face.jpg;
+          for (const [pos, b] of face) {
+            const c = cur.get(pos);
+            if (!c) cur.set(pos, b);
+            else {
+              c.votes += b.votes;
+              if (b.area > c.area) {
+                c.area = b.area;
+                c.jpg = b.jpg;
+              }
+            }
           }
         }
         this.faces.delete(from);
@@ -336,11 +385,11 @@ class Watcher extends EventEmitter {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 40)
       .map(([key, frames]) => {
-        const f = this.faces.get(key);
+        const f = this.bestFace(key, 1);
         return {
           name: this.displayForm(key),
           frames,
-          faceVotes: f ? f.votes : 0,
+          faceVotes: this.faceVotes(key),
           face: f ? `data:image/jpeg;base64,${f.jpg.toString("base64")}` : null,
         };
       });
@@ -394,18 +443,17 @@ class Watcher extends EventEmitter {
       .filter(
         ([key]) =>
           spoke.has(key) ||
-          ((this.faces.get(key) || {}).votes || 0) >= 3 ||
+          this.faceVotes(key) >= 3 ||
           !(key.length >= 4 && this.windowTitle && normalizeName(this.windowTitle).includes(key))
       )
       .sort((a, b) => b[1] - a[1])
       .map(([key, frames]) => ({ key, name: this.displayForm(key), frames }));
-    // save the best face crop per rostered participant; a couple of votes
-    // could be a one-off mispairing, so require a consistent match
+    // save a face crop only for a consistent, uncontested pairing (bestFace)
     const dir = this.store.meetingDir(this.meeting.id);
     let faceIdx = 0;
     for (const entry of roster) {
-      const f = this.faces.get(entry.key);
-      if (!f || f.votes < 3) continue;
+      const f = this.bestFace(entry.key);
+      if (!f) continue;
       if (faceIdx === 0) fs.mkdirSync(path.join(dir, "faces"), { recursive: true });
       const file = `faces/${faceIdx++}.jpg`;
       fs.writeFileSync(path.join(dir, file), f.jpg);

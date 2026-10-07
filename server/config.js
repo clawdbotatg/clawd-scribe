@@ -55,6 +55,9 @@ const DEFAULTS = {
     minDurationOn: 0.3,
     minDurationOff: 0.5,
     auto: true, // run automatically when a recording stops
+    // your own display name(s) on meeting tiles — never given to a remote
+    // voice. Usually auto-detected (your tile lights up while you talk).
+    selfNames: [],
   },
   calendar: {
     enabled: true, // title recordings after the calendar event happening now
