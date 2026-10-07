@@ -113,9 +113,12 @@ function autoNameSpeakers(meta, turns, vision, segments, config) {
   meta.autoNamed = meta.autoNamed || {};
   const assigned = {};
   const self = vision ? selfNameKeys(vision, segments, config) : new Set();
-  // only rostered participants are candidate names — the speaking timeline can
-  // carry transient OCR junk that never survived the roster filters
-  const rosterNames = new Set(((vision && vision.roster) || []).map((r) => r.name.toLowerCase()));
+  // only names seen under a face are candidates: a shared screen puts file
+  // names and headings inside the highlight too ("v In this file", 10-07).
+  // Camera-off people stay "Speaker N" — unnamed beats misnamed.
+  const rosterNames = new Set(
+    ((vision && vision.roster) || []).filter((r) => r.face || r.faceUnverified).map((r) => r.name.toLowerCase())
+  );
   const votes = new Map(); // sid -> Map(name -> overlap seconds)
   for (const turn of turns) {
     const sid = turn.speaker + 1;
@@ -141,7 +144,7 @@ function autoNameSpeakers(meta, turns, vision, segments, config) {
     const [name, sec] = ranked[0];
     const second = ranked[1] ? ranked[1][1] : 0;
     if (sec < 15 || sec < second * 2 || sec < (talk.get(sid) || 0) * 0.15) continue;
-    if (rosterNames.size && !rosterNames.has(name.toLowerCase())) continue;
+    if (!rosterNames.has(name.toLowerCase())) continue;
     if (!looksLikeName(name) || /['’]s scr|\bscreen\b/i.test(name)) continue; // UI text, "Pierre's screen" share tiles
     picks.push({ sid, name, sec });
   }

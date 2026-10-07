@@ -16,7 +16,7 @@ const turns = [
   { start: 900, end: 1300, speaker: 1 },
 ];
 const vision = {
-  roster: [{ name: "Rahul Kothari" }, { name: "Austin Griffith" }, { name: "Philip Krause" }, { name: "Austin Grithth" }],
+  roster: [{ name: "Rahul Kothari", face: "f" }, { name: "Austin Griffith", face: "f" }, { name: "Philip Krause", face: "f" }, { name: "Austin Grithth" }],
   speaking: [
     { start: 0, end: 380, name: "Austin Griffith" },
     { start: 381, end: 388, name: "Austin Grithth" },
@@ -41,13 +41,19 @@ console.log("ok: a few seconds of highlight doesn't name a voice");
 // one name, one voice: a stuck highlight on a presenter names only the
 // cluster it best explains
 const meta4 = { speakers: {} };
-const v4 = { roster: [{ name: "Eliza" }], speaking: [{ start: 0, end: 1300, name: "Eliza" }] };
+const v4 = { roster: [{ name: "Eliza", face: "f" }], speaking: [{ start: 0, end: 1300, name: "Eliza" }] };
 assert.deepStrictEqual(autoNameSpeakers(meta4, turns, v4, [], {}), { 1: "Eliza" });
 console.log("ok: a name goes to one voice only");
 
+// text on a shared screen has no face under it
+const meta6 = { speakers: {} };
+const v6 = { roster: [{ name: "v In This File" }], speaking: [{ start: 100, end: 900, name: "v In This File" }] };
+assert.deepStrictEqual(autoNameSpeakers(meta6, turns, v6, [], {}), {});
+console.log("ok: shared-screen text never becomes a name");
+
 // screen-share tiles and UI words are not people
 const meta5 = { speakers: {} };
-const v5 = { roster: [{ name: "Pierre's screen" }, { name: "File" }], speaking: [{ start: 100, end: 900, name: "Pierre's screen" }, { start: 900, end: 1300, name: "File" }] };
+const v5 = { roster: [{ name: "Pierre's screen", face: "f" }, { name: "File", face: "f" }], speaking: [{ start: 100, end: 900, name: "Pierre's screen" }, { start: 900, end: 1300, name: "File" }] };
 assert.deepStrictEqual(autoNameSpeakers(meta5, turns, v5, [], {}), {});
 console.log("ok: share tiles and UI words never become names");
 
