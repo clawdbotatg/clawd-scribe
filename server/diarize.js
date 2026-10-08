@@ -145,7 +145,7 @@ function autoNameSpeakers(meta, turns, vision, segments, config) {
     const second = ranked[1] ? ranked[1][1] : 0;
     if (sec < 15 || sec < second * 2 || sec < (talk.get(sid) || 0) * 0.15) continue;
     if (!rosterNames.has(name.toLowerCase())) continue;
-    if (!looksLikeName(name) || /['’]s scr|\bscreen\b/i.test(name)) continue; // UI text, "Pierre's screen" share tiles
+    if (!looksLikeName(name) || /['’]s scr|\bscreen\b/i.test(name)) continue; // UI text, "Pat's screen" share tiles
     picks.push({ sid, name, sec });
   }
   // one name, one voice: a highlight stuck on a presenter's tile otherwise

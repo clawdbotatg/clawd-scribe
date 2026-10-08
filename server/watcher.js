@@ -213,8 +213,8 @@ class Watcher extends EventEmitter {
     // and Teams put the label at the tile's bottom-LEFT, so a face's label
     // starts left of the face's center and is the nearest such label; the
     // neighbor tile's label starts right of it. (Pairing on vertical gap
-    // alone tied between side-by-side tiles and handed Rahul's face to
-    // Philip's name, 2026-10-06.) A face with two near-equal labels is
+    // alone tied between side-by-side tiles and handed Rae's face to
+    // Phil's name, 2026-10-06.) A face with two near-equal labels is
     // skipped — no pairing beats a wrong one.
     const cands = [];
     for (const f of msg.faces || []) {

@@ -1,5 +1,5 @@
 // Speaker auto-naming + face pairing (node test/test_speaker_naming.js).
-// Shapes come from the 2026-10-06 "AL x Builder" call, where a remote voice
+// Shapes come from a real 2026-10-06 call, where a remote voice
 // was named after the user and two of three tile photos were someone else.
 const assert = require("assert");
 const { autoNameSpeakers } = require("../server/diarize");
@@ -7,8 +7,8 @@ const { Watcher } = require("../server/watcher");
 
 // --- naming -------------------------------------------------------------
 // The user talks 0-400s (mic). Their tile is highlighted the whole time.
-// Remote cluster 0 (Rahul) talks 100-900s, overlapping the user's crosstalk;
-// Rahul's own tile barely registers. Cluster 1 (Philip) talks 900-1300s.
+// Remote cluster 0 (Rae) talks 100-900s, overlapping the user's crosstalk;
+// Rae's own tile barely registers. Cluster 1 (Phil) talks 900-1300s.
 const segments = [];
 for (let t = 0; t < 400; t += 12) segments.push({ t, end: t + 12, who: "me" });
 const turns = [
@@ -16,12 +16,12 @@ const turns = [
   { start: 900, end: 1300, speaker: 1 },
 ];
 const vision = {
-  roster: [{ name: "Rahul Kothari", face: "f" }, { name: "Austin Griffith", face: "f" }, { name: "Philip Krause", face: "f" }, { name: "Austin Grithth" }],
+  roster: [{ name: "Rae Kowal", face: "f" }, { name: "Austin Griffith", face: "f" }, { name: "Phil Kramer", face: "f" }, { name: "Austin Grithth" }],
   speaking: [
     { start: 0, end: 380, name: "Austin Griffith" },
     { start: 381, end: 388, name: "Austin Grithth" },
-    { start: 500, end: 502, name: "Rahul Kothari" },
-    { start: 950, end: 1100, name: "Philip Krause" },
+    { start: 500, end: 502, name: "Rae Kowal" },
+    { start: 950, end: 1100, name: "Phil Kramer" },
   ],
 };
 const meta = {
@@ -29,20 +29,20 @@ const meta = {
   autoNamed: { 1: "Austin Griffith" }, // what the old fusion wrote
 };
 const got = autoNameSpeakers(meta, turns, vision, segments, {});
-assert.deepStrictEqual(got, { 2: "Philip Krause" });
+assert.deepStrictEqual(got, { 2: "Phil Kramer" });
 assert.strictEqual(meta.speakers[1], "Speaker 1");
 assert.ok(!meta.autoNamed[1]);
 console.log("ok: a remote voice is never named after you (auto-detected), stale wrong name reset");
 
-// thin evidence (2 s of Rahul's tile over 800 s of talk) names nobody
+// thin evidence (2 s of Rae's tile over 800 s of talk) names nobody
 assert.strictEqual(meta.speakers[1], "Speaker 1");
 console.log("ok: a few seconds of highlight doesn't name a voice");
 
 // one name, one voice: a stuck highlight on a presenter names only the
 // cluster it best explains
 const meta4 = { speakers: {} };
-const v4 = { roster: [{ name: "Eliza", face: "f" }], speaking: [{ start: 0, end: 1300, name: "Eliza" }] };
-assert.deepStrictEqual(autoNameSpeakers(meta4, turns, v4, [], {}), { 1: "Eliza" });
+const v4 = { roster: [{ name: "Elsa", face: "f" }], speaking: [{ start: 0, end: 1300, name: "Elsa" }] };
+assert.deepStrictEqual(autoNameSpeakers(meta4, turns, v4, [], {}), { 1: "Elsa" });
 console.log("ok: a name goes to one voice only");
 
 // text on a shared screen has no face under it
@@ -53,7 +53,7 @@ console.log("ok: shared-screen text never becomes a name");
 
 // screen-share tiles and UI words are not people
 const meta5 = { speakers: {} };
-const v5 = { roster: [{ name: "Pierre's screen", face: "f" }, { name: "File", face: "f" }], speaking: [{ start: 100, end: 900, name: "Pierre's screen" }, { start: 900, end: 1300, name: "File" }] };
+const v5 = { roster: [{ name: "Pat's screen", face: "f" }, { name: "File", face: "f" }], speaking: [{ start: 100, end: 900, name: "Pat's screen" }, { start: 900, end: 1300, name: "File" }] };
 assert.deepStrictEqual(autoNameSpeakers(meta5, turns, v5, [], {}), {});
 console.log("ok: share tiles and UI words never become names");
 
@@ -64,9 +64,9 @@ assert.deepStrictEqual(autoNameSpeakers(meta2, turns, v2, [], { diarization: { s
 console.log("ok: config selfNames excluded");
 
 // a user-typed name is never touched
-const meta3 = { speakers: { 1: "Rahul" }, autoNamed: {} };
+const meta3 = { speakers: { 1: "Rae" }, autoNamed: {} };
 autoNameSpeakers(meta3, turns, vision, segments, {});
-assert.strictEqual(meta3.speakers[1], "Rahul");
+assert.strictEqual(meta3.speakers[1], "Rae");
 console.log("ok: manual names survive");
 
 // --- face pairing ---------------------------------------------------------
@@ -74,8 +74,8 @@ console.log("ok: manual names survive");
 const w = new Watcher({ id: "x" }, { watcher: {} }, null, Date.now());
 const jpg = (who) => Buffer.from(who).toString("base64");
 const tiles = [
-  { name: "Rahul Kothari", x0: 0.0 },
-  { name: "Philip Krause", x0: 0.28 },
+  { name: "Rae Kowal", x0: 0.0 },
+  { name: "Phil Kramer", x0: 0.28 },
   { name: "Austin Griffith", x0: 0.56 },
 ];
 const frame = (opts = {}) => ({
@@ -91,9 +91,9 @@ const frame = (opts = {}) => ({
   })),
 });
 for (let i = 0; i < 5; i++) w.onFrame(frame());
-// Philip's label drops out for a frame and Rahul's face is huge: must not
+// Phil's label drops out for a frame and Rae's face is huge: must not
 // hand any face to the wrong name
-w.onFrame(frame({ hideLabel: ["Philip Krause"], big: "Rahul Kothari" }));
+w.onFrame(frame({ hideLabel: ["Phil Kramer"], big: "Rae Kowal" }));
 for (const t of tiles) {
   const f = w.bestFace(t.name.toLowerCase());
   assert.ok(f, `face for ${t.name}`);
