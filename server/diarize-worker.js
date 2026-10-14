@@ -63,5 +63,29 @@ if (sd.sampleRate !== sampleRate) {
   fail(`wav is ${sampleRate}Hz but diarizer expects ${sd.sampleRate}Hz`);
 }
 
-const segments = sd.process(samples);
-process.stdout.write(JSON.stringify(segments));
+// pyannote shatters a voice: a cough, a beep or two words of crosstalk come
+// out as their own "speaker" (10-14: a 1:1 with one remote person showed 7).
+// Fold those scraps back into the real voices.
+const ex = new sherpa.SpeakerEmbeddingExtractor({ model: cfg.embModel, numThreads: 2 });
+const embed = (turns) => {
+  // longest turns first, capped — the model rejects ~2 min of input
+  const parts = [];
+  let left = 60 * sampleRate;
+  for (const t of [...turns].sort((a, b) => b.end - b.start - (a.end - a.start))) {
+    if (left <= 0) break;
+    const a = Math.floor(t.start * sampleRate);
+    const b = Math.min(samples.length, a + left, Math.floor(t.end * sampleRate));
+    if (b > a) parts.push(samples.subarray(a, b));
+    left -= Math.max(0, b - a);
+  }
+  const all = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) (all.set(p, o), (o += p.length));
+  const stream = ex.createStream();
+  stream.acceptWaveform({ sampleRate, samples: all });
+  stream.inputFinished();
+  if (!ex.isReady(stream)) return null;
+  return ex.compute(stream, false);
+};
+const { mergeFragments } = require("./merge-speakers");
+process.stdout.write(JSON.stringify(mergeFragments(sd.process(samples), embed)));
