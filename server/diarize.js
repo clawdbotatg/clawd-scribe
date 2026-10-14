@@ -190,6 +190,10 @@ async function diarizeMeeting(id, store, config) {
   for (const sid of used) {
     if (!meta.speakers[sid]) meta.speakers[sid] = `Speaker ${sid}`;
   }
+  // a voice that no longer owns a line is gone — unless you named it
+  for (const sid of Object.keys(meta.speakers)) {
+    if (!used.has(Number(sid)) && /^Speaker \d+$/.test(meta.speakers[sid])) delete meta.speakers[sid];
+  }
 
   let autoNames = {};
   let vision = null;
